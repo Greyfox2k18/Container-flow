@@ -1,0 +1,8 @@
+users/
+usersc/uploads/
+usersc/logs/*.log
+usersc/includes/google_oauth_token.php
+usersc/includes/google_drive_credentials.php
+usersc/includes/google_oauth_credentials.php
+.DS_Store
+*.swp
