@@ -1,8 +1,61 @@
+# UserSpice core folders — not ours
 users/
+usersc/plugins/
+usersc/templates/
+usersc/widgets/
+usersc/scripts/
+usersc/oauth_client/
+usersc/oauth_server/
+usersc/userspice_core/
+usersc/lang/
+usersc/images/
+
+# Uploads and logs
 usersc/uploads/
 usersc/logs/*.log
+
+# Credentials
 usersc/includes/google_oauth_token.php
 usersc/includes/google_drive_credentials.php
 usersc/includes/google_oauth_credentials.php
+usersc/includes/google_drive_credentials.php
+
+# Junk files from previous bad commits
+usersc/usersc/
+usersc/apply_*.php
+usersc/dashboard_pro_patch.js
+usersc/includes/sparkpost_email.php.bak
+
+# Root UserSpice files
+vendor/
+composer.json
+composer.lock
+README.md
+SECURITY.md
+favicon.ico
+index.php
+instructions.txt
+z_us_root.php
+
+# OS
 .DS_Store
 *.swp
+
+# UserSpice includes files — not ours
+usersc/includes/active_logging_custom.php
+usersc/includes/analytics.php
+usersc/includes/custom_functions.php
+usersc/includes/custom_totp_policy.php
+usersc/includes/dashboard_overrides.php
+usersc/includes/database_navigation_hooks.php
+usersc/includes/database_navigation_hooks_dropdown.php
+usersc/includes/deprecated/
+usersc/includes/footer.php
+usersc/includes/head_tags.php
+usersc/includes/loader.php
+usersc/includes/oauth_success_redirect.php
+usersc/includes/rate_limits.php
+usersc/includes/security_headers.php
+usersc/includes/totp_key.php
+usersc/includes/user_agreement.php
+usersc/includes/user_manager_columns.php
