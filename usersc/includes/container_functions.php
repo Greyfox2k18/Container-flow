@@ -4,6 +4,8 @@
 
 if (!defined('CONTAINER_SITE_URL')) define('CONTAINER_SITE_URL', 'https://container-flow.com');
 
+require_once __DIR__ . '/email_templates.php';
+
 function getContainerSetting($key, $default = null) {
     try {
         $row = DB::getInstance()->query("SELECT setting_value FROM container_settings WHERE setting_key = ? LIMIT 1",[$key])->first();
@@ -638,48 +640,45 @@ function sendCompletionNotification($container_id, $triggered_by_user_id = 0) {
 
     cfLog("Attachment summary", ['attached' => count($attachments), 'skipped' => $skipped_photos, 'total_kb' => round($total_bytes/1024)]);
     $date_label  = getDateFieldLabel($container->type);
-    $type_intro  = $container->type === 'outbound'
-        ? 'Your container has shipped and the photos are attached to this email.'
-        : 'Your container has arrived and the photos are attached to this email.';
-
-    $html  = '<div style="font-family:Arial,Helvetica,sans-serif;max-width:620px;margin:0 auto;color:#1f2937;">';
-    $html .= '<div style="background:#1e3a5f;padding:22px 28px;">';
-    $html .= '<h2 style="margin:0 0 4px;font-size:19px;font-weight:700;color:#fff;">Container Photos Ready</h2>';
-    $html .= '<p style="margin:0;font-size:12px;color:#9bbdd6;">' . date('l, F j, Y') . '</p>';
-    $html .= '</div>';
-    $html .= '<div style="background:#fff;border:1px solid #e2e8f0;border-top:none;padding:22px 28px;">';
-    $html .= '<p style="margin:0 0 18px;font-size:14px;color:#374151;">' . $type_intro . '</p>';
-    $html .= '<table style="width:100%;border-collapse:collapse;font-size:13px;margin-bottom:20px;">';
-    $html .= '<tr style="border-bottom:1px solid #f3f4f6;"><td style="padding:7px 0;color:#6b7280;width:130px;">Container #</td><td style="padding:7px 0;font-weight:700;font-family:Courier New,monospace;">' . htmlspecialchars($container->container_number) . '</td></tr>';
-    if ($container->shipment_number) {
-        $html .= '<tr style="border-bottom:1px solid #f3f4f6;"><td style="padding:7px 0;color:#6b7280;">Shipment #</td><td style="padding:7px 0;font-weight:600;">' . htmlspecialchars($container->shipment_number) . '</td></tr>';
-    }
-    if ($container->po_bol_number) {
-        $html .= '<tr style="border-bottom:1px solid #f3f4f6;"><td style="padding:7px 0;color:#6b7280;">PO / BOL</td><td style="padding:7px 0;font-weight:600;">' . htmlspecialchars($container->po_bol_number) . '</td></tr>';
-    }
-    if ($container->receipt_ship_date) {
-        $html .= '<tr style="border-bottom:1px solid #f3f4f6;"><td style="padding:7px 0;color:#6b7280;">' . htmlspecialchars($date_label) . '</td><td style="padding:7px 0;font-weight:600;">' . date('M d, Y', strtotime($container->receipt_ship_date)) . '</td></tr>';
-    }
-    $html .= '<tr><td style="padding:7px 0;color:#6b7280;">Photos</td><td style="padding:7px 0;font-weight:600;">' . count($photos) . ' attached</td></tr>';
-    $html .= '</table>';
-
-    if ($skipped_photos > 0) {
-        $html .= '<div style="background:#fef3c7;border-left:3px solid #f59e0b;padding:10px 14px;margin-bottom:16px;font-size:13px;">';
-        $html .= $skipped_photos . ' photo(s) were too large to attach even after compression. ';
-        $html .= '<a href="' . htmlspecialchars($portal_url) . '" style="color:#92400e;font-weight:700;">View all photos online</a></div>';
-    }
-
-    // Always include portal link
-    $html .= '<div style="text-align:center;margin:18px 0;">';
-    $html .= '<a href="' . htmlspecialchars($portal_url) . '" style="display:inline-block;background:#1e3a5f;color:#fff;padding:12px 28px;text-decoration:none;font-weight:700;font-size:14px;border-radius:6px;">View &amp; Download All Photos Online</a>';
-    $html .= '</div>';
-    $html .= '</div>';
-    $html .= '<div style="background:#f8fafc;border:1px solid #e2e8f0;border-top:none;padding:10px 28px;">';
-    $html .= '<p style="margin:0;font-size:11px;color:#9ca3af;">Automated notification from Container Flow</p>';
-    $html .= '</div></div>';
-
     $client_name = $customer ? $customer->name : 'No Client';
-    $subject     = $client_name . ' — Container ' . $container->container_number . ' Photos';
+    $portal_url  = getPortalUrl($container_id); // was previously used below but never set — pre-existing bug, fixed here
+
+    // Pre-build the optional row/notice blocks — these stay fixed HTML,
+    // the editable template just decides where the {{...}} tokens for
+    // them go (see usersc/includes/email_templates.php).
+    $shipment_row = $container->shipment_number
+        ? '<tr style="border-bottom:1px solid #f3f4f6;"><td style="padding:7px 0;color:#6b7280;">Shipment #</td><td style="padding:7px 0;font-weight:600;">' . htmlspecialchars($container->shipment_number) . '</td></tr>'
+        : '';
+
+    $po_bol_row = $container->po_bol_number
+        ? '<tr style="border-bottom:1px solid #f3f4f6;"><td style="padding:7px 0;color:#6b7280;">PO / BOL</td><td style="padding:7px 0;font-weight:600;">' . htmlspecialchars($container->po_bol_number) . '</td></tr>'
+        : '';
+
+    $date_row = $container->receipt_ship_date
+        ? '<tr style="border-bottom:1px solid #f3f4f6;"><td style="padding:7px 0;color:#6b7280;">' . htmlspecialchars($date_label) . '</td><td style="padding:7px 0;font-weight:600;">' . date('M d, Y', strtotime($container->receipt_ship_date)) . '</td></tr>'
+        : '';
+
+    $skipped_notice = $skipped_photos > 0
+        ? '<div style="background:#fef3c7;border-left:3px solid #f59e0b;padding:10px 14px;margin-bottom:16px;font-size:13px;">'
+          . $skipped_photos . ' photo(s) were too large to attach even after compression. '
+          . '<a href="' . htmlspecialchars($portal_url) . '" style="color:#92400e;font-weight:700;">View all photos online</a></div>'
+        : '';
+
+    $vars = [
+        'client_name'      => htmlspecialchars($client_name),
+        'container_number' => htmlspecialchars($container->container_number),
+        'date'             => date('l, F j, Y'),
+        'photo_count'      => count($photos),
+        'portal_url'       => htmlspecialchars($portal_url),
+        'shipment_row'     => $shipment_row,
+        'po_bol_row'       => $po_bol_row,
+        'date_row'         => $date_row,
+        'skipped_notice'   => $skipped_notice,
+    ];
+
+    $template = getEmailTemplate($container->type); // 'inbound' or 'outbound'
+    $subject  = renderEmailTemplate($template['subject'], $vars);
+    $html     = renderEmailTemplate($template['html_body'], $vars);
 
     cfLog("Calling SparkPost", ['subject' => $subject, 'to' => $emails, 'attachments' => count($attachments)]);
 
@@ -693,7 +692,6 @@ function sendCompletionNotification($container_id, $triggered_by_user_id = 0) {
     }
 
     return ['sent' => $result['success'], 'reason' => $result['message'] ?? ''];
-    return ['sent' => $result['success'], 'reason' => $result['message'] ?? null];
 }
 
 // ── Client portal helpers ─────────────────────────────────────────────────────
