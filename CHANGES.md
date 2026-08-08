@@ -129,3 +129,48 @@
 - Points column = **`plg_points`** (NOT `points`)
 - `hasPerm([10])` works for page-level supervisor checks
 - `$user->isLoggedIn()` used for floor worker access (no specific perm needed)
+
+
+
+---
+
+## Email templates (usersc/includes/email_templates.php, usersc/email_template_edit.php)
+- New `email_templates` table — editable HTML for the inbound/outbound completion-notification emails, `{{variable}}` tokens
+- `sendCompletionNotification()` in `container_functions.php` now calls `getEmailTemplate()` + `renderEmailTemplate()` instead of building HTML inline
+- Fixed a pre-existing bug: `$portal_url` was used but never assigned in `sendCompletionNotification()`
+- `email_template_edit.php` reads `subject`/`html_body` from raw `$_POST`, not `Input::get()` — this framework's `Input::get()` auto-`htmlspecialchars()`s values, which double-encodes HTML on save
+- `getEmailTemplate()` self-heals a previously double-encoded row on read (detects `&lt;` with no literal `<`)
+
+## Multi-warehouse (usersc/warehouses.php, usersc/includes/warehouses_migration.sql)
+- New `warehouses` table — links a friendly name to an existing UserSpice tag (`plg_tags`, NOT the stock `tags` table this install doesn't use)
+- New `containers.warehouse_id` column, nullable — unassigned containers stay visible to everyone
+- `getAllContainers()` now filters by the logged-in user's warehouse tags via `filterContainersByWarehouseAccess()` — untagged users are unrestricted (opt-in restriction, not opt-in access)
+- `getWarehousesForUser($user_id)` — scoped warehouse list (own tags, or all if untagged) — used for filter dropdowns and the create/edit warehouse picker so nobody sees warehouses they don't belong to
+- `getSupervisorEmails($warehouse_id = null)` — optional warehouse filter, falls back to ALL supervisors if nobody's tagged for that warehouse yet (never sends to nobody)
+- `sendReadyForReviewNotification()` passes the container's `warehouse_id` through
+- `container_dashboard.php` / `container_dashboard_pro.php` — Warehouse column, filter dropdown, Pro dashboard edit-modal field
+- `container_create.php` — Warehouse dropdown, auto-selects if the creator only has one warehouse tag
+
+## Automated reports (usersc/reports_builder.php, usersc/includes/reports_functions.php)
+- New tables: `report_definitions`, `report_recipients`, `report_run_log`
+- Delivery modes: `scheduled` (cron, `usersc/cron/reports_cron.php`), `event` (status-change triggered), or `both`
+- Event trigger is centralized inside `updateContainer()` — any status change from ANY caller fires `sendEventTriggeredReports()` automatically, no other files needed changes
+- Content filters: type, status, client, warehouse, carrier; format: HTML table and/or CSV attachment
+- `isScheduledReportDue()` checks the hour (not exact minute) so the cron can run as often as every 15 min without double-sending
+
+## Missing-photos alerts (usersc/ajax/container_notify_missing.php)
+- Built on the UserSpice **messaging** plugin (`usplugins/src/messaging`, `sendPlgMessage()`) — sent as `msg_type` 1 (alert). NOT the separate `messages` plugin (`messageUser()`) — that one is full user-to-user inbox threading, wrong fit for a one-way ping
+- `getMissingPhotoTypes($container)` — diffs `getPhotoTypes()` against uploaded photos
+- `getFloorWorkers()` — deliberately does NOT use `fetchPermissionUsers()` for perm IDs 10/11 (unreliable for this, per earlier note above on floor-worker detection) — filters all active users through `isFloorWorker()` instead
+- Panel lives in the Pro dashboard's edit modal only; `container_dashboard.php` doesn't have one (no `container_view.php`-style actions surface available at time of writing)
+
+## Unique identifier per client (usersc/customer_identifier_settings.php, usersc/includes/identifier_migration.sql)
+- Dropped the hard `UNIQUE KEY container_number` on `containers` — it permanently blocked reusing a number even after that container was long done, which broke clients whose freight rides on reused trailers
+- Replaced with app-level `findDuplicateIdentifier($field, $value, $exclude_id)` — scoped to currently-open containers only (`status != 'reviewed'`)
+- New `customers.use_shipment_number_as_id` flag — flagged clients get checked on `shipment_number` instead of `container_number`, via `getIdentifierField($customer_id)`
+- Checked in both `container_create.php` and `ajax/container_update.php`
+
+## Still outstanding
+- `container_edit.php` was never uploaded this session — warehouse picker, identifier validation, and missing-photos alert are NOT wired into it if it's a separate page from the Pro dashboard modal
+- Missing-photos alert action was requested for `container_view.php`'s existing Actions button — not yet done, file not uploaded
+- Daily digest (`cron/daily_digest.php`) and the reports page still show all warehouses to all supervisors — not scoped to warehouse tags

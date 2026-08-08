@@ -22,6 +22,7 @@ $company_name = 'Robbins Solutions';
 
 $containers = getAllContainers();
 $customers = getAllCustomers();
+$warehouses = getWarehousesForUser($user_id); // only the user's own warehouse(s) — or all, if untagged
 
 // Pull all photos for all containers in one query, grouped by container_id,
 // so the modal can show them instantly with no extra round trip.
@@ -59,6 +60,8 @@ foreach ($containers as $c) {
         'seal_number' => $c->seal_number,
         'customer_id' => $c->customer_id ? (int)$c->customer_id : null,
         'customer_name' => $c->customer_name,
+        'warehouse_id' => $c->warehouse_id ? (int)$c->warehouse_id : null,
+        'warehouse_name' => $c->warehouse_name,
         'type' => $c->type,
         'status' => $c->status,
         'notes' => $c->notes,
@@ -69,6 +72,7 @@ foreach ($containers as $c) {
 }
 
 $customers_js = array_map(fn($c) => ['id' => (int)$c->id, 'name' => $c->name], $customers);
+$warehouses_js = array_map(fn($w) => ['id' => (int)$w->id, 'name' => $w->name], $warehouses);
 
 global $container_statuses;
 $status_options_js = $container_statuses;
@@ -266,6 +270,8 @@ $current_user_name = trim($user->data()->fname . ' ' . $user->data()->lname);
         <span class="cd-filterbar-divider"></span>
         <label>Client</label>
         <select id="cdFilterCustomer"><option value="">All Clients</option></select>
+        <label>Warehouse</label>
+        <select id="cdFilterWarehouse"><option value="">All Warehouses</option></select>
         <label>Carrier</label>
         <select id="cdFilterCarrier"><option value="">All Carriers</option></select>
         <label>Created By</label>
@@ -313,6 +319,7 @@ $current_user_name = trim($user->data()->fname . ' ' . $user->data()->lname);
                             <th data-sort="po_bol_number">PO/BOL<span class="cd-sort-arrow"></span></th>
                             <th data-sort="carrier">Carrier<span class="cd-sort-arrow"></span></th>
                             <th data-sort="customer_name">Customer<span class="cd-sort-arrow"></span></th>
+                            <th data-sort="warehouse_name">Warehouse<span class="cd-sort-arrow"></span></th>
                             <th data-sort="seal_number">Seal Number<span class="cd-sort-arrow"></span></th>
                             <th data-sort="type">Type<span class="cd-sort-arrow"></span></th>
                             <th data-sort="receipt_ship_date">Receipt/Ship Date<span class="cd-sort-arrow"></span></th>
@@ -400,6 +407,17 @@ $current_user_name = trim($user->data()->fname . ' ' . $user->data()->lname);
                         <?php endforeach; ?>
                     </select>
                 </label>
+                <?php if (!empty($warehouses)): ?>
+                <label class="cd-field">
+                    <span class="cd-field-label">Warehouse</span>
+                    <select id="cdFWarehouse">
+                        <option value="">-- No warehouse --</option>
+                        <?php foreach ($warehouses as $w): ?>
+                        <option value="<?php echo $w->id; ?>"><?php echo htmlspecialchars($w->name); ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </label>
+                <?php endif; ?>
                 <label class="cd-field">
                     <span class="cd-field-label">Seal Number</span>
                     <input type="text" id="cdFSealNumber" class="cd-mono">
@@ -436,6 +454,25 @@ $current_user_name = trim($user->data()->fname . ' ' . $user->data()->lname);
             <div class="cd-photos-label">PHOTOS</div>
             <div class="cd-photo-grid" id="cdPhotoGrid"></div>
             <input type="file" id="cdPhotoFileInput" accept="image/*" multiple style="display:none;">
+
+            <?php if ($is_supervisor): ?>
+            <div class="cd-photos-label" style="margin-top:18px;">MISSING PHOTOS ALERT</div>
+            <div id="cdMissingPanel" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:14px 16px;">
+                <div id="cdMissingList" style="font-size:13px;color:#4b5563;margin-bottom:10px;">Checking...</div>
+                <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;">
+                    <label style="flex:1;min-width:160px;">
+                        <span class="cd-field-label">Notify</span>
+                        <select id="cdMissingRecipient" style="width:100%;padding:7px 9px;border:1px solid #d1d5db;border-radius:6px;"></select>
+                    </label>
+                    <label style="flex:2;min-width:220px;">
+                        <span class="cd-field-label">Note (optional)</span>
+                        <input type="text" id="cdMissingMessage" placeholder="e.g. need these before end of shift" style="width:100%;padding:7px 9px;border:1px solid #d1d5db;border-radius:6px;">
+                    </label>
+                    <div class="cd-btn cd-btn-primary" id="cdMissingSendBtn">Send Alert</div>
+                </div>
+                <div id="cdMissingMsg" style="font-size:12px;margin-top:8px;"></div>
+            </div>
+            <?php endif; ?>
 
             <div id="cdModalMsg"></div>
         </div>
@@ -526,6 +563,7 @@ $current_user_name = trim($user->data()->fname . ' ' . $user->data()->lname);
     // ============ Server-provided data ============
     var DATA = <?php echo json_encode($js_containers); ?>;
     var CUSTOMERS = <?php echo json_encode($customers_js); ?>;
+    var WAREHOUSES = <?php echo json_encode($warehouses_js); ?>;
     var STATUS_OPTIONS = <?php echo json_encode($status_options_js); ?>;
     var CSRF = '<?php echo $csrf; ?>';
     var BASE_URL = '<?php echo $us_url_root; ?>';
@@ -535,6 +573,7 @@ $current_user_name = trim($user->data()->fname . ' ' . $user->data()->lname);
     var state = {
         activeType: null,       // 'inbound' | 'outbound' | null
         activeCustomer: '',
+        activeWarehouse: '',
         activeCarrier: '',
         activeCreatedBy: '',
         showReviewed: false,
@@ -781,6 +820,7 @@ $current_user_name = trim($user->data()->fname . ' ' . $user->data()->lname);
             if (state.activeType && c.type !== state.activeType) return false;
             if (!state.showReviewed && c.status === 'reviewed') return false;
             if (state.activeCustomer  && (c.customer_name   || '') !== state.activeCustomer)  return false;
+            if (state.activeWarehouse && (c.warehouse_name  || '') !== state.activeWarehouse) return false;
             if (state.activeCarrier   && (c.carrier          || '') !== state.activeCarrier)   return false;
             if (state.activeCreatedBy && (c.created_by_name  || '') !== state.activeCreatedBy) return false;
             if (state.activeStatus && c.status !== state.activeStatus) return false;
@@ -788,6 +828,7 @@ $current_user_name = trim($user->data()->fname . ' ' . $user->data()->lname);
             if (search) {
                 var hay = [
                     c.container_number, c.shipment_number, c.customer_name,
+                    c.warehouse_name,
                     c.seal_number, c.created_by_name, formatDate(c.created_at),
                     formatDate(c.receipt_ship_date), c.po_bol_number, c.carrier,
                     c.piece_count
@@ -855,6 +896,7 @@ $current_user_name = trim($user->data()->fname . ' ' . $user->data()->lname);
                     '<td class="cd-muted-cell">' + escapeHtml(c.po_bol_number || '-') + '</td>' +
                     '<td class="cd-muted-cell">' + escapeHtml(c.carrier || '-') + '</td>' +
                     '<td>' + escapeHtml(c.customer_name || '-') + '</td>' +
+                    '<td>' + escapeHtml(c.warehouse_name || '-') + '</td>' +
                     '<td class="cd-seal-cell">' + escapeHtml(c.seal_number || '-') + '</td>' +
                     '<td>' + typeHtml + '</td>' +
                     '<td class="cd-muted-cell cd-nowrap">' + (c.receipt_ship_date ? formatDate(c.receipt_ship_date) : '-') + '</td>' +
@@ -959,6 +1001,7 @@ $current_user_name = trim($user->data()->fname . ' ' . $user->data()->lname);
         byId('cdFCarrier').value = c.carrier || '';
         byId('cdFPieceCount').value = (c.piece_count !== null && c.piece_count !== undefined) ? c.piece_count : '';
         byId('cdFCustomer').value = c.customer_id || '';
+        if (byId('cdFWarehouse')) byId('cdFWarehouse').value = c.warehouse_id || '';
         byId('cdFSealNumber').value = c.seal_number || '';
         byId('cdFType').value = c.type;
         updateEventDateLabel();
@@ -970,10 +1013,75 @@ $current_user_name = trim($user->data()->fname . ' ' . $user->data()->lname);
 
         renderPhotoGrid(c.photos || []);
 
+        if (byId('cdMissingPanel')) {
+            loadMissingPhotosPanel(id);
+        }
+
         if (byId('cdModalDeleteOne')) {
             byId('cdModalDeleteOne').style.display = 'inline';
         }
         byId('cdModalOverlay').classList.add('open');
+    }
+
+    function loadMissingPhotosPanel(container_id) {
+        var listEl = byId('cdMissingList');
+        var recipSel = byId('cdMissingRecipient');
+        var msgEl = byId('cdMissingMsg');
+        listEl.textContent = 'Checking...';
+        recipSel.innerHTML = '';
+        msgEl.textContent = '';
+
+        var checkFd = new FormData();
+        checkFd.append('action', 'check');
+        checkFd.append('container_id', container_id);
+
+        fetchJson(BASE_URL + 'usersc/ajax/container_notify_missing.php', checkFd)
+            .then(function(data) {
+                if (!data.success) {
+                    listEl.textContent = data.message || 'Could not check photos.';
+                    return;
+                }
+                if (!data.messages_plugin_enabled) {
+                    listEl.innerHTML = '<em>The UserSpice Messaging plugin isn\'t enabled — turn it on in the Plugin Manager to send alerts.</em>';
+                    byId('cdMissingSendBtn').style.display = 'none';
+                    return;
+                }
+                byId('cdMissingSendBtn').style.display = 'inline-block';
+
+                listEl.textContent = data.missing.length
+                    ? 'Missing: ' + data.missing.join(', ')
+                    : 'All required photo types are present.';
+
+                data.floor_workers.forEach(function(fw) {
+                    var o = document.createElement('option');
+                    o.value = fw.id; o.textContent = fw.name;
+                    if (data.default_recipient_id && fw.id === data.default_recipient_id) o.selected = true;
+                    recipSel.appendChild(o);
+                });
+            })
+            .catch(function() { listEl.textContent = 'Could not check photos.'; });
+    }
+
+    if (byId('cdMissingSendBtn')) {
+        byId('cdMissingSendBtn').addEventListener('click', function() {
+            if (!editingId) return;
+            var msgEl = byId('cdMissingMsg');
+            msgEl.textContent = 'Sending...';
+            var fd = new FormData();
+            fd.append('csrf', CSRF);
+            fd.append('action', 'send');
+            fd.append('container_id', editingId);
+            fd.append('recipient_id', byId('cdMissingRecipient').value);
+            fd.append('message', byId('cdMissingMessage').value);
+
+            fetchJson(BASE_URL + 'usersc/ajax/container_notify_missing.php', fd)
+                .then(function(data) {
+                    msgEl.textContent = data.message || (data.success ? 'Sent.' : 'Failed.');
+                    msgEl.style.color = data.success ? '#15711f' : '#c0392b';
+                    if (data.success) byId('cdMissingMessage').value = '';
+                })
+                .catch(function() { msgEl.textContent = 'Send failed.'; msgEl.style.color = '#c0392b'; });
+        });
     }
 
     function openModalForNew() {
@@ -1130,6 +1238,7 @@ $current_user_name = trim($user->data()->fname . ' ' . $user->data()->lname);
         fd.append('carrier', byId('cdFCarrier').value.trim());
         fd.append('piece_count', byId('cdFPieceCount').value);
         fd.append('customer_id', byId('cdFCustomer').value);
+        if (byId('cdFWarehouse')) fd.append('warehouse_id', byId('cdFWarehouse').value);
         fd.append('seal_number', byId('cdFSealNumber').value.trim());
         fd.append('type', byId('cdFType').value);
         fd.append('status', byId('cdFStatus').value);
@@ -1202,10 +1311,11 @@ $current_user_name = trim($user->data()->fname . ' ' . $user->data()->lname);
     }
     // ── Populate dropdown filters from DATA ──────────────────────────────
     function populateFilterDropdowns() {
-        var customers = {}, carriers = {}, creators = {};
+        var customers = {}, warehouses = {}, carriers = {}, creators = {};
         DATA.forEach(function(c) {
             if (!state.showReviewed && c.status === 'reviewed') return;
             if (c.customer_name)   customers[c.customer_name]   = true;
+            if (c.warehouse_name)  warehouses[c.warehouse_name] = true;
             if (c.carrier)         carriers[c.carrier]          = true;
             if (c.created_by_name) creators[c.created_by_name]  = true;
         });
@@ -1220,18 +1330,24 @@ $current_user_name = trim($user->data()->fname . ' ' . $user->data()->lname);
             if (map[cur]) sel.value = cur;
         }
         fill('cdFilterCustomer', customers);
+        fill('cdFilterWarehouse', warehouses);
         fill('cdFilterCarrier',  carriers);
         fill('cdFilterCreatedBy', creators);
     }
 
     // Dropdown filter events
     function updateDropClear() {
-        var active = state.activeCustomer || state.activeCarrier || state.activeCreatedBy;
+        var active = state.activeCustomer || state.activeWarehouse || state.activeCarrier || state.activeCreatedBy;
         byId('cdClearDropFilters').style.display = active ? 'inline' : 'none';
     }
     byId('cdFilterCustomer').addEventListener('change', function() {
         state.activeCustomer = this.value; state.page = 1; updateDropClear(); renderTable();
     });
+    if (byId('cdFilterWarehouse')) {
+        byId('cdFilterWarehouse').addEventListener('change', function() {
+            state.activeWarehouse = this.value; state.page = 1; updateDropClear(); renderTable();
+        });
+    }
     byId('cdFilterCarrier').addEventListener('change', function() {
         state.activeCarrier = this.value; state.page = 1; updateDropClear(); renderTable();
     });
@@ -1239,8 +1355,9 @@ $current_user_name = trim($user->data()->fname . ' ' . $user->data()->lname);
         state.activeCreatedBy = this.value; state.page = 1; updateDropClear(); renderTable();
     });
     byId('cdClearDropFilters').addEventListener('click', function() {
-        state.activeCustomer = state.activeCarrier = state.activeCreatedBy = '';
+        state.activeCustomer = state.activeWarehouse = state.activeCarrier = state.activeCreatedBy = '';
         byId('cdFilterCustomer').value = byId('cdFilterCarrier').value = byId('cdFilterCreatedBy').value = '';
+        if (byId('cdFilterWarehouse')) byId('cdFilterWarehouse').value = '';
         updateDropClear(); state.page = 1; renderTable();
     });
     byId('cdShowReviewed').addEventListener('change', function() {

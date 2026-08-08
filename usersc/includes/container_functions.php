@@ -5,6 +5,7 @@
 if (!defined('CONTAINER_SITE_URL')) define('CONTAINER_SITE_URL', 'https://container-flow.com');
 
 require_once __DIR__ . '/email_templates.php';
+require_once __DIR__ . '/reports_functions.php';
 
 function getContainerSetting($key, $default = null) {
     try {
@@ -114,6 +115,65 @@ $container_statuses = [
  * @param string   $container_type  'inbound' | 'outbound'
  * @return array   ['type_key' => 'Label', ...]
  */
+// ── Missing-photos alerts ────────────────────────────────────────────────────
+// Lets a supervisor ping a specific user (usually whoever created the
+// container) about missing required photos. Built on the UserSpice
+// "messaging" plugin's sendPlgMessage() — sent as an alert (type 1), which
+// shows up in that plugin's badge/notification UI. This is a one-way
+// alert, not a conversation.
+
+/**
+ * Required photo types for this container that don't have an uploaded
+ * photo yet. Returns ['type_key' => 'Label', ...], same shape as getPhotoTypes().
+ */
+function getMissingPhotoTypes($container) {
+    $required = getPhotoTypes($container->customer_id, $container->type);
+    $existing = array_unique(array_map(fn($p) => $p->photo_type, getContainerPhotos($container->id)));
+
+    $missing = [];
+    foreach ($required as $key => $label) {
+        if (!in_array($key, $existing, true)) {
+            $missing[$key] = $label;
+        }
+    }
+    return $missing;
+}
+
+/**
+ * Sends a missing-photos alert via the Messages plugin. Returns
+ * ['sent' => bool, 'reason' => string, 'missing' => array].
+ * Fails gracefully (sent=false, clear reason) if the Messages plugin
+ * isn't installed/enabled, rather than fataling.
+ */
+function notifyMissingPhotos($container_id, $recipient_user_id, $sender_user_id, $custom_message = '') {
+    if (!function_exists('sendPlgMessage')) {
+        return ['sent' => false, 'reason' => 'The UserSpice Messaging plugin isn\'t enabled — turn it on in the Plugin Manager first.', 'missing' => []];
+    }
+
+    $container = getContainerById($container_id);
+    if (!$container) {
+        return ['sent' => false, 'reason' => 'Container not found', 'missing' => []];
+    }
+    if (!$recipient_user_id) {
+        return ['sent' => false, 'reason' => 'No recipient specified', 'missing' => []];
+    }
+
+    $missing = getMissingPhotoTypes($container);
+    $missing_list = empty($missing) ? '(none flagged — sending as a general reminder)' : implode(', ', $missing);
+
+    $subject = 'Missing photos — Container ' . $container->container_number;
+    $body = 'Container ' . $container->container_number . ' is missing: ' . $missing_list . '.';
+    if (trim((string) $custom_message) !== '') {
+        $body .= "\n\n" . trim($custom_message);
+    }
+    $body .= "\n\nPlease upload as soon as possible.";
+
+    sendPlgMessage((int) $recipient_user_id, $subject, $body, $sender_user_id, 1); // type 1 = alert
+    logContainerActivity($container_id, $sender_user_id, 'missing_photos_alert', 'Notified user #' . $recipient_user_id . ' — missing: ' . $missing_list);
+
+    return ['sent' => true, 'reason' => '', 'missing' => $missing];
+}
+
 function getPhotoTypes($customer_id = null, $container_type = 'inbound') {
     global $photo_types;
     $default = $photo_types[$container_type] ?? [];
@@ -161,6 +221,19 @@ function isFloorWorker($user_id = null) {
     return hasPerm([10, 11], $user_id);
 }
 
+/**
+ * All active floor-worker users, for the "who should this missing-photos
+ * alert go to" dropdown. Mirrors the permission IDs used by isFloorWorker().
+ */
+function getFloorWorkers() {
+    try {
+        $users = DB::getInstance()->query("SELECT id, fname, lname, email FROM users WHERE active = 1 ORDER BY lname, fname")->results() ?: [];
+        return array_values(array_filter($users, fn($u) => isFloorWorker((int) $u->id)));
+    } catch (\Throwable $e) {
+        return [];
+    }
+}
+
 function logContainerActivity($container_id, $user_id, $action, $details = '') {
     $db = DB::getInstance();
     $db->insert('container_activity_log', [
@@ -190,14 +263,16 @@ function getContainerById($container_id) {
     return $result;
 }
 
-function getAllContainers($type = null, $status = null) {
+function getAllContainers($type = null, $status = null, $filter_by_access = true) {
     $db = DB::getInstance();
     $query = "SELECT c.*, u1.fname as creator_fname, u1.lname as creator_lname,
               cu.name as customer_name,
+              wh.name as warehouse_name,
               (SELECT COUNT(*) FROM container_photos cp WHERE cp.container_id = c.id) AS photo_count
               FROM containers c
               LEFT JOIN users u1 ON c.created_by = u1.id
               LEFT JOIN customers cu ON c.customer_id = cu.id
+              LEFT JOIN warehouses wh ON c.warehouse_id = wh.id
               WHERE 1=1";
     $params = [];
     
@@ -213,7 +288,41 @@ function getAllContainers($type = null, $status = null) {
     
     $query .= " ORDER BY c.created_at DESC";
     
-    return $db->query($query, $params)->results();
+    $results = $db->query($query, $params)->results() ?: [];
+
+    if ($filter_by_access) {
+        $results = filterContainersByWarehouseAccess($results);
+    }
+
+    return $results;
+}
+
+/**
+ * Restricts a container list (as returned by getAllContainers) to the ones
+ * the current user is allowed to see, based on warehouse tags:
+ *   - A container with no warehouse_id is visible to everyone.
+ *   - A user with NO warehouse tags at all is unrestricted (sees
+ *     everything) — tagging is opt-in restriction, so nobody gets
+ *     locked out just because this feature exists.
+ *   - A user with one or more warehouse tags only sees containers in
+ *     those warehouses (plus unassigned ones).
+ * Pass $user_id explicitly for a non-session context; otherwise uses the
+ * logged-in user, and skips filtering entirely if there is no session
+ * (e.g. a cron script) rather than risk hiding everything.
+ */
+function filterContainersByWarehouseAccess($containers, $user_id = null) {
+    global $user;
+    if ($user_id === null) {
+        if (!isset($user) || !$user || !$user->isLoggedIn()) return $containers;
+        $user_id = $user->data()->id;
+    }
+
+    $allowed = getUserWarehouseIds($user_id);
+    if (empty($allowed)) return $containers;
+
+    return array_values(array_filter($containers, function($c) use ($allowed) {
+        return empty($c->warehouse_id) || in_array((int)$c->warehouse_id, $allowed, true);
+    }));
 }
 
 function getPhotoTypeLabel($photo_type, $container_type) {
@@ -244,6 +353,49 @@ function getAllCustomers() {
 function getCustomerById($customer_id) {
     $db = DB::getInstance();
     return $db->query("SELECT * FROM customers WHERE id = ?", [$customer_id])->first();
+}
+
+// ── Unique identifier handling ──────────────────────────────────────────────
+// containers.container_number used to have a hard DB-level UNIQUE constraint,
+// which permanently blocked reusing a number even long after that container
+// was done — a real problem for clients whose freight rides on their own
+// reused trailers. That constraint is now dropped (see
+// 12_identifier_migration.sql) and replaced with these app-level checks,
+// scoped to currently-open containers only (anything not yet Reviewed) —
+// and, for flagged clients, checking Shipment Number instead of Container
+// Number as the thing that actually has to be unique.
+
+/**
+ * Which field is the real unique identifier for this customer:
+ * 'shipment_number' if their profile is flagged to reuse container/trailer
+ * numbers, otherwise the default 'container_number'. Customer-less
+ * containers always use the default.
+ */
+function getIdentifierField($customer_id) {
+    if (!$customer_id) return 'container_number';
+    $customer = getCustomerById($customer_id);
+    return ($customer && !empty($customer->use_shipment_number_as_id)) ? 'shipment_number' : 'container_number';
+}
+
+/**
+ * Whether $value already exists in $field among currently-OPEN containers
+ * (status != 'reviewed'). Pass $exclude_container_id when editing so a
+ * container doesn't collide with itself. Returns the conflicting
+ * container row, or null if there's no conflict.
+ */
+function findDuplicateIdentifier($field, $value, $exclude_container_id = null) {
+    $value = trim((string) $value);
+    if ($value === '' || !in_array($field, ['container_number', 'shipment_number'], true)) return null;
+
+    $sql = "SELECT id, container_number, shipment_number, status FROM containers WHERE {$field} = ? AND status != 'reviewed'";
+    $params = [$value];
+    if ($exclude_container_id) {
+        $sql .= " AND id != ?";
+        $params[] = $exclude_container_id;
+    }
+    $sql .= " LIMIT 1";
+
+    return DB::getInstance()->query($sql, $params)->first() ?: null;
 }
 
 function createCustomer($data) {
@@ -344,6 +496,12 @@ function isCustomerNameTaken($name, $exclude_id = null) {
  */
 function updateContainer($container_id, $data) {
     $db = DB::getInstance();
+
+    $old_status = null;
+    if (isset($data['status'])) {
+        $existing = $db->query("SELECT status FROM containers WHERE id = ?", [$container_id])->first();
+        $old_status = $existing ? $existing->status : null;
+    }
     
     $update_data = [];
     if (isset($data['container_number'])) $update_data['container_number'] = trim($data['container_number']);
@@ -354,6 +512,7 @@ function updateContainer($container_id, $data) {
     if (array_key_exists('piece_count', $data)) $update_data['piece_count'] = ($data['piece_count'] !== '' && $data['piece_count'] !== null) ? (int)$data['piece_count'] : null;
     if (isset($data['seal_number'])) $update_data['seal_number'] = trim($data['seal_number']) ?: null;
     if (array_key_exists('customer_id', $data)) $update_data['customer_id'] = $data['customer_id'] ?: null;
+    if (array_key_exists('warehouse_id', $data)) $update_data['warehouse_id'] = $data['warehouse_id'] ?: null;
     if (isset($data['type'])) $update_data['type'] = $data['type'];
     if (isset($data['status'])) $update_data['status'] = $data['status'];
     if (isset($data['notes'])) $update_data['notes'] = trim($data['notes']);
@@ -362,7 +521,13 @@ function updateContainer($container_id, $data) {
         return false;
     }
     
-    return $db->update('containers', $container_id, $update_data);
+    $result = $db->update('containers', $container_id, $update_data);
+
+    if ($result !== false && isset($update_data['status']) && $update_data['status'] !== $old_status) {
+        sendEventTriggeredReports($container_id, $update_data['status']); // fails silently, logs only — see reports_functions.php
+    }
+
+    return $result;
 }
 
 /**
@@ -419,11 +584,118 @@ function deleteContainerCompletely($container_id) {
  * if attaching everything would make the email too large to send reliably,
  * this falls back to a link-only email instead of attempting a huge send.
  */
-function getSupervisorEmails() {
+// ── Warehouses (multi-warehouse via UserSpice tags) ─────────────────────────
+/**
+ * A "warehouse" links a friendly name to an existing UserSpice tag.
+ * Tag a user with that tag (via UserSpice's normal tag UI) to scope them
+ * to that warehouse. See usersc/warehouses.php for the admin page that
+ * manages these, and 05_warehouses_migration.sql for the schema.
+ */
+function getWarehouses($active_only = true) {
+    try {
+        $sql = "SELECT * FROM warehouses" . ($active_only ? " WHERE active = 1" : "") . " ORDER BY sort_order ASC, name ASC";
+        return DB::getInstance()->query($sql)->results() ?: [];
+    } catch (\Throwable $e) {
+        return []; // migration not run yet — fail open, no warehouses configured
+    }
+}
+
+function getWarehouseById($warehouse_id) {
+    if (!$warehouse_id) return null;
+    try {
+        return DB::getInstance()->query("SELECT * FROM warehouses WHERE id = ?", [$warehouse_id])->first();
+    } catch (\Throwable $e) {
+        return null;
+    }
+}
+
+function createWarehouse($tag_id, $name, $sort_order = 0) {
+    return DB::getInstance()->insert('warehouses', [
+        'tag_id'     => (int) $tag_id,
+        'name'       => trim($name),
+        'sort_order' => (int) $sort_order,
+    ]);
+}
+
+function updateWarehouse($warehouse_id, $data) {
+    return DB::getInstance()->update('warehouses', $warehouse_id, $data);
+}
+
+function deleteWarehouse($warehouse_id) {
+    return DB::getInstance()->delete('warehouses', $warehouse_id);
+}
+
+/**
+ * All UserSpice tags, for the "pick a tag to register as a warehouse"
+ * dropdown. This install's tags plugin uses `plg_tags` (id, tag, descrip).
+ */
+function getAllUserSpiceTags() {
+    try {
+        return DB::getInstance()->query("SELECT id, tag FROM plg_tags ORDER BY tag ASC")->results() ?: [];
+    } catch (\Throwable $e) {
+        return [];
+    }
+}
+
+/**
+ * Warehouse ids (our warehouses.id, not the raw UserSpice tag id) the
+ * given user has access to. Empty array means "no warehouse tags" —
+ * callers treat that as unrestricted, see filterContainersByWarehouseAccess().
+ */
+function getUserWarehouseIds($user_id) {
+    static $cache = [];
+    if (isset($cache[$user_id])) return $cache[$user_id];
+
+    $ids = [];
+    try {
+        foreach (getWarehouses(false) as $w) {
+            if (function_exists('hasTag') && hasTag((int) $w->tag_id, $user_id)) {
+                $ids[] = (int) $w->id;
+            }
+        }
+    } catch (\Throwable $e) {
+        return []; // tags plugin unavailable — fail open, don't lock everyone out
+    }
+
+    $cache[$user_id] = $ids;
+    return $ids;
+}
+
+/**
+ * Warehouses to offer in a picker (create/edit container forms) for this
+ * user: their own tagged warehouse(s) if they have any, otherwise every
+ * warehouse — so an untagged floor worker/supervisor can still assign one.
+ */
+function getWarehousesForUser($user_id) {
+    $all = getWarehouses();
+    $allowed_ids = getUserWarehouseIds($user_id);
+    if (empty($allowed_ids)) return $all;
+    return array_values(array_filter($all, fn($w) => in_array((int) $w->id, $allowed_ids, true)));
+}
+
+
+function getSupervisorEmails($warehouse_id = null) {
     try {
         $perm_rows = fetchPermissionUsers(3);
         if (empty($perm_rows)) { error_log('getSupervisorEmails: 0 rows'); return []; }
         $ids = array_values(array_map('intval', array_column((array)$perm_rows,'user_id')));
+
+        // Scope to supervisors tagged for this warehouse, if one was
+        // given and at least one supervisor is actually tagged for it.
+        // If nobody's been tagged yet, fall back to ALL supervisors
+        // rather than silently sending the review email to nobody.
+        if ($warehouse_id) {
+            $warehouse = getWarehouseById($warehouse_id);
+            if ($warehouse && function_exists('hasTag')) {
+                $tagged_ids = array_values(array_filter($ids, fn($uid) => hasTag((int) $warehouse->tag_id, $uid)));
+                if (!empty($tagged_ids)) {
+                    $ids = $tagged_ids;
+                } else {
+                    error_log('getSupervisorEmails: no supervisor tagged for warehouse "' . $warehouse->name . '" — notifying all supervisors instead');
+                }
+            }
+        }
+
         $ph  = implode(',',array_fill(0,count($ids),'?'));
         return DB::getInstance()->query(
             "SELECT id,email,fname,lname FROM users WHERE id IN ({$ph}) AND active=1 AND email IS NOT NULL AND email!='' ORDER BY lname,fname",
@@ -437,7 +709,7 @@ function sendReadyForReviewNotification($container_id, $submitted_by_user_id) {
         require_once __DIR__ . '/sparkpost_email.php';
         $db=$db=DB::getInstance(); $container=getContainerById($container_id);
         if (!$container) return ['sent'=>false,'reason'=>'Container not found'];
-        $supervisors=getSupervisorEmails();
+        $supervisors=getSupervisorEmails($container->warehouse_id ?? null);
         if (empty($supervisors)) return ['sent'=>false,'reason'=>'No supervisors found'];
         $to_emails=array_values(array_filter(array_map(fn($s)=>trim($s->email),$supervisors),fn($e)=>filter_var($e,FILTER_VALIDATE_EMAIL)));
         if (empty($to_emails)) return ['sent'=>false,'reason'=>'No valid supervisor emails'];

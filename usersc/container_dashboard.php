@@ -18,9 +18,12 @@ $user_pts          = (int)($user->data()->plg_points ?? 0);
 if ($user_pts > 0 && $reward_threshold > 0 && $user_pts >= $reward_threshold) $reward_on_load = true;
 
 
-// Everyone sees ALL containers - no assignment system, fully open.
+// Restricted to the warehouse(s) the current user is tagged for (see
+// usersc/warehouses.php) — untagged users and unassigned containers stay
+// unrestricted, so nothing changes here until a warehouse is set up.
 $containers = getAllContainers();
 $customers = getAllCustomers();
+$warehouses = getWarehousesForUser($user_id); // only the user's own warehouse(s) — or all, if untagged
 
 // Statistics
 $total_containers = count($containers);
@@ -155,7 +158,7 @@ $csrf = Token::generate();
 .data-table-container {
     background: white;
     border-radius: 8px;
-    overflow: hidden;
+    overflow-x: auto;
     box-shadow: 0 2px 4px rgba(0,0,0,0.1);
 }
 
@@ -422,6 +425,16 @@ $csrf = Token::generate();
                         </select>
                     </div>
                     <?php endif; ?>
+                    <?php if (!empty($warehouses)): ?>
+                    <div class="toolbar-item">
+                        <select class="form-control" id="warehouseFilter">
+                            <option value="">All Warehouses</option>
+                            <?php foreach ($warehouses as $w): ?>
+                            <option value="<?php echo htmlspecialchars($w->name); ?>"><?php echo htmlspecialchars($w->name); ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+                    <?php endif; ?>
                     <div class="toolbar-item" style="flex: 0 0 auto; min-width: auto;">
                         <label class="show-completed-toggle" for="showCompletedToggle">
                             <input type="checkbox" id="showCompletedToggle">
@@ -455,6 +468,7 @@ $csrf = Token::generate();
                         <tr>
                             <th class="sortable" data-sort="container">Container #</th>
                             <th class="sortable" data-sort="client">Client</th>
+                            <th class="sortable" data-sort="warehouse">Warehouse</th>
                             <th class="sortable" data-sort="shipment">Shipment #</th>
                             <th class="sortable" data-sort="pobol">PO/BOL #</th>
                             <th class="sortable" data-sort="carrier">Carrier</th>
@@ -472,11 +486,13 @@ $csrf = Token::generate();
                         <tr data-type="<?php echo $container->type; ?>" 
                             data-status="<?php echo $container->status; ?>" 
                             data-client="<?php echo htmlspecialchars($container->customer_name ?? ''); ?>"
-                            data-search="<?php echo strtolower($container->container_number . ' ' . ($container->seal_number ?? '') . ' ' . ($container->shipment_number ?? '') . ' ' . ($container->customer_name ?? '') . ' ' . ($container->po_bol_number ?? '') . ' ' . ($container->carrier ?? '')); ?>"
+                            data-warehouse="<?php echo htmlspecialchars($container->warehouse_name ?? ''); ?>"
+                            data-search="<?php echo strtolower($container->container_number . ' ' . ($container->seal_number ?? '') . ' ' . ($container->shipment_number ?? '') . ' ' . ($container->customer_name ?? '') . ' ' . ($container->po_bol_number ?? '') . ' ' . ($container->carrier ?? '') . ' ' . ($container->warehouse_name ?? '')); ?>"
                             data-date="<?php echo strtotime($container->created_at); ?>"
                             data-eventdate="<?php echo $container->receipt_ship_date ? strtotime($container->receipt_ship_date) : 0; ?>">
                             <td><strong><?php echo htmlspecialchars($container->container_number); ?></strong></td>
                             <td><?php echo htmlspecialchars($container->customer_name ?? '-'); ?></td>
+                            <td><?php echo htmlspecialchars($container->warehouse_name ?? '-'); ?></td>
                             <td><?php echo htmlspecialchars($container->shipment_number ?? '-'); ?></td>
                             <td><?php echo htmlspecialchars($container->po_bol_number ?? '-'); ?></td>
                             <td><?php echo htmlspecialchars($container->carrier ?? '-'); ?></td>
@@ -628,7 +644,7 @@ $csrf = Token::generate();
                 <a href="container_view.php?id=<?php echo $container->id; ?>"
                    class="mob-tile"
                    data-status="<?php echo $container->status; ?>"
-                   data-search="<?php echo strtolower(htmlspecialchars($container->container_number . ' ' . ($container->seal_number ?? '') . ' ' . ($container->shipment_number ?? '') . ' ' . ($container->customer_name ?? '') . ' ' . ($container->po_bol_number ?? '') . ' ' . ($container->carrier ?? ''))); ?>">
+                   data-search="<?php echo strtolower(htmlspecialchars($container->container_number . ' ' . ($container->seal_number ?? '') . ' ' . ($container->shipment_number ?? '') . ' ' . ($container->customer_name ?? '') . ' ' . ($container->po_bol_number ?? '') . ' ' . ($container->carrier ?? '') . ' ' . ($container->warehouse_name ?? ''))); ?>">
                     <div class="mob-tile-top">
                         <div class="mob-tile-num"><?php echo htmlspecialchars($container->container_number); ?></div>
                         <span class="mob-tile-status" style="background:<?php echo $sbg; ?>;color:<?php echo $stx; ?>;"><?php echo $slb; ?></span>
@@ -637,6 +653,9 @@ $csrf = Token::generate();
                         <span class="mob-tile-type" style="background:<?php echo $tbg; ?>;color:<?php echo $ttx; ?>;"><?php echo ucfirst($container->type); ?></span>
                         <?php if ($container->customer_name): ?>
                         <span class="mob-tile-client"><?php echo htmlspecialchars($container->customer_name); ?></span>
+                        <?php endif; ?>
+                        <?php if (!empty($container->warehouse_name)): ?>
+                        <span class="mob-tile-client"><i class="fa fa-building-o"></i> <?php echo htmlspecialchars($container->warehouse_name); ?></span>
                         <?php endif; ?>
                         <?php if (!empty($container->photo_count)): ?>
                         <span class="mob-tile-photos"><i class="fa fa-camera"></i> <?php echo $container->photo_count; ?></span>
@@ -787,6 +806,7 @@ $(document).ready(function() {
         var typeFilter = $('#typeFilter').val();
         var statusFilter = $('#statusFilter').val();
         var clientFilter = $('#clientFilter').length ? $('#clientFilter').val() : '';
+        var warehouseFilter = $('#warehouseFilter').length ? $('#warehouseFilter').val() : '';
         var showCompleted = $('#showCompletedToggle').is(':checked');
         
         $('#containerTable tbody tr').each(function() {
@@ -795,17 +815,19 @@ $(document).ready(function() {
             var type = $row.data('type');
             var status = String($row.data('status'));
             var client = String($row.data('client') || '');
+            var warehouse = String($row.data('warehouse') || '');
             
             var searchMatch = !searchText || searchData.indexOf(searchText) !== -1;
             var typeMatch = !typeFilter || type === typeFilter;
             var statusMatch = !statusFilter || status === statusFilter;
             var clientMatch = !clientFilter || client === clientFilter;
+            var warehouseMatch = !warehouseFilter || warehouse === warehouseFilter;
             
             // Hide completed/reviewed by default, unless the toggle is on
             // or the person explicitly picked that status from the dropdown.
             var completedMatch = showCompleted || !isDoneStatus(status) || statusFilter === status;
             
-            if (searchMatch && typeMatch && statusMatch && clientMatch && completedMatch) {
+            if (searchMatch && typeMatch && statusMatch && clientMatch && warehouseMatch && completedMatch) {
                 $row.show();
             } else {
                 $row.hide();
@@ -813,7 +835,7 @@ $(document).ready(function() {
         });
     }
     
-    $('#searchInput, #typeFilter, #statusFilter, #clientFilter').on('input change', filterTable);
+    $('#searchInput, #typeFilter, #statusFilter, #clientFilter, #warehouseFilter').on('input change', filterTable);
     $('#showCompletedToggle').on('change', filterTable);
     
     // Run once on load so completed/reviewed start hidden
@@ -847,21 +869,25 @@ $(document).ready(function() {
                     aVal = $(a).find('td:eq(1)').text();
                     bVal = $(b).find('td:eq(1)').text();
                     break;
-                case 'shipment':
-                    aVal = $(a).find('td:eq(2)').text();
-                    bVal = $(b).find('td:eq(2)').text();
+                case 'warehouse':
+                    aVal = $(a).data('warehouse');
+                    bVal = $(b).data('warehouse');
                     break;
-                case 'pobol':
+                case 'shipment':
                     aVal = $(a).find('td:eq(3)').text();
                     bVal = $(b).find('td:eq(3)').text();
                     break;
-                case 'carrier':
+                case 'pobol':
                     aVal = $(a).find('td:eq(4)').text();
                     bVal = $(b).find('td:eq(4)').text();
                     break;
-                case 'seal':
+                case 'carrier':
                     aVal = $(a).find('td:eq(5)').text();
                     bVal = $(b).find('td:eq(5)').text();
+                    break;
+                case 'seal':
+                    aVal = $(a).find('td:eq(6)').text();
+                    bVal = $(b).find('td:eq(6)').text();
                     break;
                 case 'type':
                     aVal = $(a).data('type');
@@ -876,8 +902,8 @@ $(document).ready(function() {
                     bVal = $(b).data('status');
                     break;
                 case 'creator':
-                    aVal = $(a).find('td:eq(9)').text();
-                    bVal = $(b).find('td:eq(9)').text();
+                    aVal = $(a).find('td:eq(10)').text();
+                    bVal = $(b).find('td:eq(10)').text();
                     break;
             }
             

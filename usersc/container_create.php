@@ -33,11 +33,31 @@ if (Input::exists()) {
         $carrier = trim(Input::get('carrier'));
         $piece_count = Input::get('piece_count');
         $customer_id = Input::get('customer_id');
+        $warehouse_id = Input::get('warehouse_id');
         $notes = trim(Input::get('notes'));
         
         // Validation
         if (empty($container_number)) {
             $errors[] = 'Container number is required.';
+        }
+
+        // Which field actually has to be unique depends on the client — see
+        // usersc/customer_identifier_settings.php. Default is container_number;
+        // clients flagged there use shipment_number instead (their "container
+        // number" is really a reused trailer number).
+        $identifier_field = getIdentifierField($customer_id ?: null);
+        $identifier_value = $identifier_field === 'shipment_number' ? $shipment_number : $container_number;
+
+        if (empty($errors)) {
+            if ($identifier_field === 'shipment_number' && empty($shipment_number)) {
+                $errors[] = 'This client is set up to use Shipment Number as the unique identifier — it\'s required.';
+            } else {
+                $dupe = findDuplicateIdentifier($identifier_field, $identifier_value);
+                if ($dupe) {
+                    $field_label = $identifier_field === 'shipment_number' ? 'shipment number' : 'container number';
+                    $errors[] = 'That ' . $field_label . ' is already in use by an open container (#' . $dupe->id . ', status: ' . htmlspecialchars($dupe->status) . '). It\'ll free up once that one is marked Reviewed.';
+                }
+            }
         }
         
         if (empty($errors)) {
@@ -54,6 +74,7 @@ if (Input::exists()) {
                     'carrier' => $carrier ?: null,
                     'piece_count' => $piece_count !== '' ? (int)$piece_count : null,
                     'customer_id' => $customer_id ?: null,
+                    'warehouse_id' => $warehouse_id ?: null,
                     'type' => $type,
                     'status' => 'pending',
                     'created_by' => $user_id,
@@ -79,6 +100,7 @@ if (Input::exists()) {
 }
 
 $customers = getAllCustomers();
+$warehouses = getWarehousesForUser($user_id);
 ?>
 
 <div id="page-wrapper">
@@ -141,6 +163,26 @@ $customers = getAllCustomers();
                                     <?php endif; ?>
                                 </small>
                             </div>
+
+                            <?php if (!empty($warehouses)): ?>
+                            <?php
+                            $selected_warehouse_id = Input::get('warehouse_id');
+                            if (!$selected_warehouse_id && count($warehouses) === 1) {
+                                $selected_warehouse_id = $warehouses[0]->id; // only one warehouse this user can pick — default to it
+                            }
+                            ?>
+                            <div class="form-group">
+                                <label for="warehouse_id">Warehouse</label>
+                                <select class="form-control" id="warehouse_id" name="warehouse_id">
+                                    <option value="">-- No warehouse selected --</option>
+                                    <?php foreach ($warehouses as $w): ?>
+                                    <option value="<?php echo (int) $w->id; ?>" <?php echo $selected_warehouse_id == $w->id ? 'selected' : ''; ?>>
+                                        <?php echo htmlspecialchars($w->name); ?>
+                                    </option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+                            <?php endif; ?>
 
                             <div class="form-group">
                                 <label for="shipment_number">Shipment Number</label>

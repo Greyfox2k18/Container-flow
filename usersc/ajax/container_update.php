@@ -42,6 +42,23 @@ if (empty($container_number)) {
     exit;
 }
 
+$new_customer_id = Input::get('customer_id') ?: null;
+$new_shipment_number = trim(Input::get('shipment_number'));
+$identifier_field = getIdentifierField($new_customer_id);
+$identifier_value = $identifier_field === 'shipment_number' ? $new_shipment_number : $container_number;
+
+if ($identifier_field === 'shipment_number' && empty($new_shipment_number)) {
+    echo json_encode(['success' => false, 'message' => 'This client is set up to use Shipment Number as the unique identifier — it\'s required.']);
+    exit;
+}
+
+$dupe = findDuplicateIdentifier($identifier_field, $identifier_value, $container_id);
+if ($dupe) {
+    $field_label = $identifier_field === 'shipment_number' ? 'shipment number' : 'container number';
+    echo json_encode(['success' => false, 'message' => 'That ' . $field_label . ' is already in use by an open container (#' . $dupe->id . ', status: ' . $dupe->status . '). It\'ll free up once that one is marked Reviewed.']);
+    exit;
+}
+
 $user_id = $user->data()->id;
 
 try {
@@ -54,6 +71,7 @@ try {
         'piece_count' => Input::get('piece_count'),
         'seal_number' => Input::get('seal_number'),
         'customer_id' => Input::get('customer_id') ?: null,
+        'warehouse_id' => Input::get('warehouse_id') ?: null,
         'type' => Input::get('type'),
         'status' => Input::get('status'),
         'notes' => Input::get('notes'),
@@ -78,6 +96,7 @@ try {
         $db = DB::getInstance();
         $fresh = getContainerById($container_id);
         $customer = $fresh->customer_id ? getCustomerById($fresh->customer_id) : null;
+        $warehouse = $fresh->warehouse_id ? getWarehouseById($fresh->warehouse_id) : null;
         $creator = $db->query("SELECT fname, lname FROM users WHERE id = ?", [$fresh->created_by])->first();
 
         echo json_encode([
@@ -94,6 +113,8 @@ try {
                 'seal_number' => $fresh->seal_number,
                 'customer_id' => $fresh->customer_id,
                 'customer_name' => $customer ? $customer->name : null,
+                'warehouse_id' => $fresh->warehouse_id ? (int)$fresh->warehouse_id : null,
+                'warehouse_name' => $warehouse ? $warehouse->name : null,
                 'type' => $fresh->type,
                 'status' => $fresh->status,
                 'notes' => $fresh->notes,
