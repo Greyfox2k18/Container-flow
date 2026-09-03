@@ -33,6 +33,10 @@ if (Input::exists()) {
         $notification_emails_inbound = trim(Input::get('notification_emails_inbound'));
         $notification_emails_outbound = trim(Input::get('notification_emails_outbound'));
         $notes = trim(Input::get('notes'));
+        $retention_days_raw = Input::get('retention_days');
+        $retention_days = ($retention_days_raw !== '' && $retention_days_raw !== null) ? (int) $retention_days_raw : 90;
+        $delete_after_days_raw = Input::get('delete_after_days');
+        $delete_after_days = ($delete_after_days_raw !== '' && $delete_after_days_raw !== null) ? (int) $delete_after_days_raw : 30;
 
         if (empty($name)) {
             $errors[] = 'Client name is required.';
@@ -56,6 +60,14 @@ if (Input::exists()) {
             }
         }
 
+        if ($retention_days < 1 || $retention_days > 3650) {
+            $errors[] = 'Archive period must be between 1 and 3650 days.';
+        }
+
+        if ($delete_after_days < 1 || $delete_after_days > 3650) {
+            $errors[] = 'Delete-after-archive period must be between 1 and 3650 days.';
+        }
+
         if (empty($errors) && isCustomerNameTaken($name, $customer_id)) {
             $errors[] = 'A client with this name already exists.';
         }
@@ -68,7 +80,9 @@ if (Input::exists()) {
                 'phone' => $phone,
                 'notification_emails_inbound' => $notification_emails_inbound,
                 'notification_emails_outbound' => $notification_emails_outbound,
-                'notes' => $notes
+                'notes' => $notes,
+                'retention_days' => $retention_days,
+                'delete_after_days' => $delete_after_days
             ]);
 
             $success = 'Client updated successfully!';
@@ -159,6 +173,29 @@ if (Input::exists()) {
                             <div class="form-group">
                                 <label for="notes">Notes</label>
                                 <textarea class="form-control" id="notes" name="notes" rows="3"><?php echo htmlspecialchars($customer->notes ?? ''); ?></textarea>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="retention_days">Archive After (days)</label>
+                                <input type="number" class="form-control" id="retention_days" name="retention_days" min="1" max="3650"
+                                       value="<?php echo htmlspecialchars($customer->retention_days ?? '90'); ?>" style="max-width:160px;">
+                                <small class="form-text text-muted">
+                                    Once a container for this client is <strong>Reviewed</strong>, successfully backed up
+                                    to Google Drive, and older than this many days, it's <strong>archived</strong> — hidden
+                                    from the simple dashboard, but still visible (and fully restorable) on the Pro
+                                    dashboard. Nothing is deleted at this point. Default: 90 days.
+                                </small>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="delete_after_days">Permanently Delete After Archiving (days)</label>
+                                <input type="number" class="form-control" id="delete_after_days" name="delete_after_days" min="1" max="3650"
+                                       value="<?php echo htmlspecialchars($customer->delete_after_days ?? '30'); ?>" style="max-width:160px;">
+                                <small class="form-text text-muted">
+                                    After a container has been <strong>archived</strong> for this many additional days,
+                                    its local photos and record are permanently deleted (the Drive backup remains
+                                    forever). Default: 30 days.
+                                </small>
                             </div>
 
                             <div class="form-group">

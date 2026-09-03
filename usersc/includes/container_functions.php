@@ -263,7 +263,7 @@ function getContainerById($container_id) {
     return $result;
 }
 
-function getAllContainers($type = null, $status = null, $filter_by_access = true) {
+function getAllContainers($type = null, $status = null, $filter_by_access = true, $include_archived = false) {
     $db = DB::getInstance();
     $query = "SELECT c.*, u1.fname as creator_fname, u1.lname as creator_lname,
               cu.name as customer_name,
@@ -275,6 +275,10 @@ function getAllContainers($type = null, $status = null, $filter_by_access = true
               LEFT JOIN warehouses wh ON c.warehouse_id = wh.id
               WHERE 1=1";
     $params = [];
+
+    if (!$include_archived) {
+        $query .= " AND c.archived_at IS NULL";
+    }
     
     if ($type) {
         $query .= " AND c.type = ?";
@@ -295,6 +299,161 @@ function getAllContainers($type = null, $status = null, $filter_by_access = true
     }
 
     return $results;
+}
+
+/**
+ * Server-side paginated + filtered container query, for the simple
+ * dashboard (which was previously loading and rendering every container
+ * ever created, then hiding most of them client-side - slow once the
+ * table grows). Warehouse access is applied as a real SQL WHERE clause
+ * here (not the post-fetch PHP filtering getAllContainers uses), since
+ * post-filtering after a SQL LIMIT would silently return fewer rows than
+ * requested and break page counts.
+ *
+ * $filters keys (all optional): search, type, status, customer_name,
+ * warehouse_name, show_reviewed (bool - false hides status=reviewed
+ * unless status filter explicitly asks for it).
+ * $sort: container|client|warehouse|shipment|pobol|carrier|seal|type|
+ *        eventdate|status|creator|date  $dir: asc|desc
+ *
+ * @return array ['rows' => object[], 'total' => int, 'total_pages' => int, 'page' => int]
+ */
+function getPaginatedContainers($filters, $user_id, $page = 1, $per_page = 50, $sort = 'date', $dir = 'desc') {
+    $db = DB::getInstance();
+    $page = max(1, (int) $page);
+    $per_page = max(1, min(200, (int) $per_page));
+
+    $where = ["c.archived_at IS NULL"]; // simple dashboard never shows archived containers
+    $params = [];
+
+    $allowed_warehouse_ids = getUserWarehouseIds($user_id);
+    if (!empty($allowed_warehouse_ids)) {
+        $ph = implode(',', array_fill(0, count($allowed_warehouse_ids), '?'));
+        $where[] = "(c.warehouse_id IS NULL OR c.warehouse_id IN ({$ph}))";
+        $params = array_merge($params, $allowed_warehouse_ids);
+    }
+
+    if (!empty($filters['type'])) {
+        $where[] = "c.type = ?";
+        $params[] = $filters['type'];
+    }
+    if (!empty($filters['status'])) {
+        $where[] = "c.status = ?";
+        $params[] = $filters['status'];
+    } elseif (empty($filters['show_reviewed'])) {
+        $where[] = "c.status != 'reviewed'";
+    }
+    if (!empty($filters['customer_name'])) {
+        $where[] = "cu.name = ?";
+        $params[] = $filters['customer_name'];
+    }
+    if (!empty($filters['warehouse_name'])) {
+        $where[] = "wh.name = ?";
+        $params[] = $filters['warehouse_name'];
+    }
+    if (!empty($filters['search'])) {
+        $term = '%' . $filters['search'] . '%';
+        $where[] = "(c.container_number LIKE ? OR c.seal_number LIKE ? OR c.shipment_number LIKE ? OR c.po_bol_number LIKE ? OR c.carrier LIKE ? OR cu.name LIKE ? OR wh.name LIKE ?)";
+        array_push($params, $term, $term, $term, $term, $term, $term, $term);
+    }
+
+    $where_sql = implode(' AND ', $where);
+
+    $sort_columns = [
+        'container' => 'c.container_number', 'client' => 'cu.name', 'warehouse' => 'wh.name',
+        'shipment' => 'c.shipment_number', 'pobol' => 'c.po_bol_number', 'carrier' => 'c.carrier',
+        'seal' => 'c.seal_number', 'type' => 'c.type', 'eventdate' => 'c.receipt_ship_date',
+        'status' => 'c.status', 'creator' => 'u1.fname', 'date' => 'c.created_at',
+    ];
+    $order_col = $sort_columns[$sort] ?? 'c.created_at';
+    $order_dir = strtolower($dir) === 'asc' ? 'ASC' : 'DESC';
+
+    $count_sql = "SELECT COUNT(*) AS cnt FROM containers c
+                  LEFT JOIN customers cu ON c.customer_id = cu.id
+                  LEFT JOIN warehouses wh ON c.warehouse_id = wh.id
+                  WHERE {$where_sql}";
+    $total = (int) $db->query($count_sql, $params)->first()->cnt;
+    $total_pages = max(1, (int) ceil($total / $per_page));
+    $page = min($page, $total_pages);
+    $offset = ($page - 1) * $per_page;
+
+    $sql = "SELECT c.*, u1.fname as creator_fname, u1.lname as creator_lname,
+            cu.name as customer_name, wh.name as warehouse_name,
+            (SELECT COUNT(*) FROM container_photos cp WHERE cp.container_id = c.id) AS photo_count
+            FROM containers c
+            LEFT JOIN users u1 ON c.created_by = u1.id
+            LEFT JOIN customers cu ON c.customer_id = cu.id
+            LEFT JOIN warehouses wh ON c.warehouse_id = wh.id
+            WHERE {$where_sql}
+            ORDER BY {$order_col} {$order_dir}
+            LIMIT {$per_page} OFFSET {$offset}";
+
+    $rows = $db->query($sql, $params)->results() ?: [];
+
+    return ['rows' => $rows, 'total' => $total, 'total_pages' => $total_pages, 'page' => $page];
+}
+
+/**
+ * Fast aggregate counts for the dashboard stat cards - a single query
+ * instead of loading every container into PHP just to count() them.
+ * Respects the same warehouse-access + non-archived scoping as
+ * getPaginatedContainers(), so the numbers always match what's browsable.
+ */
+function getContainerStats($user_id) {
+    $db = DB::getInstance();
+    $where = ["c.archived_at IS NULL"];
+    $params = [];
+
+    $allowed_warehouse_ids = getUserWarehouseIds($user_id);
+    if (!empty($allowed_warehouse_ids)) {
+        $ph = implode(',', array_fill(0, count($allowed_warehouse_ids), '?'));
+        $where[] = "(c.warehouse_id IS NULL OR c.warehouse_id IN ({$ph}))";
+        $params = array_merge($params, $allowed_warehouse_ids);
+    }
+    $where_sql = implode(' AND ', $where);
+
+    $sql = "SELECT
+            COUNT(*) AS total,
+            SUM(c.status = 'pending') AS pending,
+            SUM(c.status = 'in_progress') AS in_progress,
+            SUM(c.status = 'completed') AS completed,
+            SUM(c.status = 'reviewed') AS reviewed,
+            SUM(c.type = 'inbound') AS inbound,
+            SUM(c.type = 'outbound') AS outbound
+            FROM containers c WHERE {$where_sql}";
+
+    $row = $db->query($sql, $params)->first();
+
+    return [
+        'total' => (int) $row->total, 'pending' => (int) $row->pending,
+        'in_progress' => (int) $row->in_progress, 'completed' => (int) $row->completed,
+        'reviewed' => (int) $row->reviewed, 'inbound' => (int) $row->inbound,
+        'outbound' => (int) $row->outbound,
+    ];
+}
+
+/**
+ * Archives a container (hides it from the simple dashboard, keeps it on
+ * the Pro dashboard) - reversible, doesn't touch photos or the record
+ * itself. Local deletion is a separate, later, much more cautious step -
+ * see cleanup_core.php.
+ */
+function archiveContainer($container_id, $user_id = null) {
+    $db = DB::getInstance();
+    $result = $db->update('containers', $container_id, ['archived_at' => date('Y-m-d H:i:s')]);
+    if ($result !== false && $user_id) {
+        logContainerActivity($container_id, $user_id, 'archived', 'Container archived (hidden from simple dashboard)');
+    }
+    return $result;
+}
+
+function unarchiveContainer($container_id, $user_id = null) {
+    $db = DB::getInstance();
+    $result = $db->update('containers', $container_id, ['archived_at' => null]);
+    if ($result !== false && $user_id) {
+        logContainerActivity($container_id, $user_id, 'unarchived', 'Container restored from archive');
+    }
+    return $result;
 }
 
 /**
@@ -421,6 +580,8 @@ function updateCustomer($customer_id, $data) {
         'notification_emails_outbound' => $data['notification_emails_outbound'] ?: null,
         'phone' => $data['phone'] ?: null,
         'notes' => $data['notes'] ?: null,
+        'retention_days' => array_key_exists('retention_days', $data) && $data['retention_days'] !== '' ? (int) $data['retention_days'] : 90,
+        'delete_after_days' => array_key_exists('delete_after_days', $data) && $data['delete_after_days'] !== '' ? (int) $data['delete_after_days'] : 30,
     ]);
 }
 

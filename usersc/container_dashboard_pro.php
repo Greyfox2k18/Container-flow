@@ -20,7 +20,7 @@ if ($user_pts > 0 && $reward_threshold > 0 && $user_pts >= $reward_threshold) $r
 // Change this to whatever you'd like shown in the status bar
 $company_name = 'Robbins Solutions';
 
-$containers = getAllContainers();
+$containers = getAllContainers(null, null, true, true); // include_archived=true — archived containers stay visible here, just hidden from the simple dashboard
 $customers = getAllCustomers();
 $warehouses = getWarehousesForUser($user_id); // only the user's own warehouse(s) — or all, if untagged
 
@@ -67,6 +67,7 @@ foreach ($containers as $c) {
         'notes' => $c->notes,
         'created_by_name' => trim(($c->creator_fname ?? '') . ' ' . ($c->creator_lname ?? '')),
         'created_at' => $c->created_at,
+        'archived_at' => $c->archived_at,
         'photos' => $photos_by_container[$c->id] ?? [],
     ];
 }
@@ -282,6 +283,10 @@ $current_user_name = trim($user->data()->fname . ' ' . $user->data()->lname);
             <input type="checkbox" id="cdShowReviewed" style="width:14px;height:14px;cursor:pointer;">
             Show Reviewed
         </label>
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-weight:400;color:#374151;">
+            <input type="checkbox" id="cdShowArchived" style="width:14px;height:14px;cursor:pointer;">
+            Show Archived
+        </label>
     </div>
 
     <!-- body -->
@@ -479,6 +484,7 @@ $current_user_name = trim($user->data()->fname . ' ' . $user->data()->lname);
         <div class="cd-modal-footer">
             <?php if ($is_supervisor): ?>
             <span class="cd-modal-delete-link" id="cdModalDeleteOne">Delete record</span>
+            <span class="cd-modal-delete-link" id="cdModalArchiveToggle" style="color:#6b7280;"></span>
             <?php endif; ?>
             <div class="cd-modal-footer-right">
                 <div class="cd-btn" id="cdModalCancel">Cancel</div>
@@ -577,6 +583,7 @@ $current_user_name = trim($user->data()->fname . ' ' . $user->data()->lname);
         activeCarrier: '',
         activeCreatedBy: '',
         showReviewed: false,
+        showArchived: false,
         activeStatus: null,     // 'pending' | 'in_progress' | ... | null
         openGroups: {inbound: true, outbound: true},
         search: '',
@@ -819,6 +826,7 @@ $current_user_name = trim($user->data()->fname . ' ' . $user->data()->lname);
         return DATA.filter(function(c) {
             if (state.activeType && c.type !== state.activeType) return false;
             if (!state.showReviewed && c.status === 'reviewed') return false;
+            if (!state.showArchived && c.archived_at) return false;
             if (state.activeCustomer  && (c.customer_name   || '') !== state.activeCustomer)  return false;
             if (state.activeWarehouse && (c.warehouse_name  || '') !== state.activeWarehouse) return false;
             if (state.activeCarrier   && (c.carrier          || '') !== state.activeCarrier)   return false;
@@ -887,6 +895,9 @@ $current_user_name = trim($user->data()->fname . ' ' . $user->data()->lname);
                     ? '<span class="cd-type-inbound">&darr; Inbound</span>'
                     : '<span class="cd-type-outbound">&uarr; Outbound</span>';
                 var statusHtml = '<span class="cd-status-pill cd-status-' + c.status + '">' + escapeHtml(statusLabel(c.status)) + '</span>';
+                if (c.archived_at) {
+                    statusHtml += ' <span class="cd-status-pill" style="background:#f3f4f6;color:#6b7280;">Archived</span>';
+                }
                 var checked = state.selected[c.id] ? 'checked' : '';
                 var rowSelected = state.selected[c.id] ? ' cd-row-selected' : '';
                 return '<tr class="' + rowSelected.trim() + '" data-id="' + c.id + '">' +
@@ -1019,6 +1030,10 @@ $current_user_name = trim($user->data()->fname . ' ' . $user->data()->lname);
 
         if (byId('cdModalDeleteOne')) {
             byId('cdModalDeleteOne').style.display = 'inline';
+        }
+        if (byId('cdModalArchiveToggle')) {
+            byId('cdModalArchiveToggle').textContent = c.archived_at ? 'Un-archive' : 'Archive';
+            byId('cdModalArchiveToggle').dataset.archived = c.archived_at ? '1' : '0';
         }
         byId('cdModalOverlay').classList.add('open');
     }
@@ -1314,6 +1329,7 @@ $current_user_name = trim($user->data()->fname . ' ' . $user->data()->lname);
         var customers = {}, warehouses = {}, carriers = {}, creators = {};
         DATA.forEach(function(c) {
             if (!state.showReviewed && c.status === 'reviewed') return;
+            if (!state.showArchived && c.archived_at) return;
             if (c.customer_name)   customers[c.customer_name]   = true;
             if (c.warehouse_name)  warehouses[c.warehouse_name] = true;
             if (c.carrier)         carriers[c.carrier]          = true;
@@ -1362,6 +1378,10 @@ $current_user_name = trim($user->data()->fname . ' ' . $user->data()->lname);
     });
     byId('cdShowReviewed').addEventListener('change', function() {
         state.showReviewed = this.checked; state.page = 1;
+        populateFilterDropdowns(); renderAll();
+    });
+    byId('cdShowArchived').addEventListener('change', function() {
+        state.showArchived = this.checked; state.page = 1;
         populateFilterDropdowns(); renderAll();
     });
 
@@ -1426,7 +1446,7 @@ $current_user_name = trim($user->data()->fname . ' ' . $user->data()->lname);
         state.search = '';
         state.dateFrom = ''; state.dateTo = '';
         state.activeCustomer = ''; state.activeCarrier = ''; state.activeCreatedBy = '';
-        state.showReviewed = false; state.selected = {};
+        state.showReviewed = false; state.showArchived = false; state.selected = {};
         state.sortCol = 'created_at';
         state.sortDir = 'desc';
         state.page = 1;
@@ -1437,6 +1457,7 @@ $current_user_name = trim($user->data()->fname . ' ' . $user->data()->lname);
         byId('cdClearDropFilters').style.display = 'none';
         byId('cdFilterCustomer').value = ''; byId('cdFilterCarrier').value = ''; byId('cdFilterCreatedBy').value = '';
         if (byId('cdShowReviewed')) byId('cdShowReviewed').checked = false;
+        if (byId('cdShowArchived')) byId('cdShowArchived').checked = false;
         populateFilterDropdowns();
         document.querySelectorAll('.cd-sort-arrow').forEach(function(el) { el.textContent = ''; });
         renderAll();
@@ -1616,6 +1637,34 @@ $current_user_name = trim($user->data()->fname . ' ' . $user->data()->lname);
     if (byId('cdModalDeleteOne')) {
         byId('cdModalDeleteOne').addEventListener('click', function() {
             if (editingId) deleteContainers([editingId]);
+        });
+    }
+    if (byId('cdModalArchiveToggle')) {
+        byId('cdModalArchiveToggle').addEventListener('click', function() {
+            if (!editingId) return;
+            var btn = this;
+            var archiving = btn.dataset.archived !== '1'; // toggling TO archived if currently not archived
+            var fd = new FormData();
+            fd.append('csrf', CSRF);
+            fd.append('container_id', editingId);
+            fd.append('action', archiving ? 'archive' : 'unarchive');
+
+            fetchJson(BASE_URL + 'usersc/ajax/container_archive_toggle.php', fd)
+                .then(function(data) {
+                    if (data.success) {
+                        var c = findContainer(editingId);
+                        if (c) c.archived_at = data.archived_at;
+                        btn.textContent = archiving ? 'Un-archive' : 'Archive';
+                        btn.dataset.archived = archiving ? '1' : '0';
+                        populateFilterDropdowns();
+                        renderAll();
+                    } else {
+                        showModalMsg(data.message || 'Failed.', 'error');
+                    }
+                })
+                .catch(function() {
+                    showModalMsg('Request failed.', 'error');
+                });
         });
     }
     

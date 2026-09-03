@@ -49,9 +49,25 @@ if (Input::exists()) {
             if (empty($container_number)) {
                 $errors[] = 'Container number is required.';
             }
+
+            // Which field actually has to be unique depends on the client -
+            // see usersc/customer_identifier_settings.php.
+            $identifier_field = getIdentifierField($customer_id ?: null);
+            $identifier_value = $identifier_field === 'shipment_number' ? $shipment_number : $container_number;
+
+            if (empty($errors)) {
+                if ($identifier_field === 'shipment_number' && empty($shipment_number)) {
+                    $errors[] = 'This client is set up to use Shipment Number as the unique identifier — it\'s required.';
+                } else {
+                    $dupe = findDuplicateIdentifier($identifier_field, $identifier_value, $container_id);
+                    if ($dupe) {
+                        $field_label = $identifier_field === 'shipment_number' ? 'shipment number' : 'container number';
+                        $errors[] = 'That ' . $field_label . ' is already in use by an open container (#' . $dupe->id . ', status: ' . htmlspecialchars($dupe->status) . '). It\'ll free up once that one is marked Reviewed.';
+                    }
+                }
+            }
             
             if (empty($errors)) {
-                $db = DB::getInstance();
                 $update_data = [
                     'container_number' => $container_number,
                     'seal_number' => $seal_number ?: null,
@@ -67,19 +83,25 @@ if (Input::exists()) {
                 
                 $was_reviewed_already = ($container->status === 'reviewed');
                 
-                $db->update('containers', $container_id, $update_data);
-                logContainerActivity($container_id, $user_id, 'updated', 'Updated container information');
-                
-                // Floor work being marked Completed no longer emails anyone -
-                // that now happens when a supervisor reviews the photos and
-                // marks it Reviewed. Only fires once per transition, not on
-                // every subsequent save while it's already Reviewed.
-                if ($status === 'reviewed' && !$was_reviewed_already) {
-                    sendCompletionNotification($container_id, $user_id);
+                $updated = updateContainer($container_id, $update_data);
+
+                if ($updated !== false) {
+                    logContainerActivity($container_id, $user_id, 'updated', 'Updated container information');
+
+                    // Floor work being marked Completed no longer emails anyone -
+                    // that now happens when a supervisor reviews the photos and
+                    // marks it Reviewed. Only fires once per transition, not on
+                    // every subsequent save while it's already Reviewed.
+                    if ($status === 'reviewed' && !$was_reviewed_already) {
+                        sendCompletionNotification($container_id, $user_id);
+                    }
+                    
+                    $success = 'Container updated successfully!';
+                    $container = getContainerById($container_id);
+                } else {
+                    $db_error = DB::getInstance()->errorString();
+                    $errors[] = $db_error ? "Update failed: {$db_error}" : 'Update failed - no changes were saved.';
                 }
-                
-                $success = 'Container updated successfully!';
-                $container = getContainerById($container_id);
             }
         }
     } else {

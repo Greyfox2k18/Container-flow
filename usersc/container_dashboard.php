@@ -2,6 +2,7 @@
 require_once '../users/init.php';
 require_once $abs_us_root.$us_url_root.'users/includes/template/prep.php';
 require_once $abs_us_root.$us_url_root.'usersc/includes/container_functions.php';
+require_once $abs_us_root.$us_url_root.'usersc/includes/container_row_render.php';
 
 if (!securePage($_SERVER['PHP_SELF'])) {
     die();
@@ -21,18 +22,29 @@ if ($user_pts > 0 && $reward_threshold > 0 && $user_pts >= $reward_threshold) $r
 // Restricted to the warehouse(s) the current user is tagged for (see
 // usersc/warehouses.php) — untagged users and unassigned containers stay
 // unrestricted, so nothing changes here until a warehouse is set up.
-$containers = getAllContainers();
+//
+// Paginated server-side (50/page) - this used to load every container
+// ever created and hide most of them with client-side JS, which got
+// slow as the table grew. First page (default filters: hide Reviewed)
+// is rendered here for a fast first paint; everything after that -
+// search, filters, sort, page changes - goes through
+// usersc/ajax/container_list.php instead of client-side filtering.
+$default_filters = ['show_reviewed' => false];
+$page_result = getPaginatedContainers($default_filters, $user_id, 1, 50, 'date', 'desc');
+$containers = $page_result['rows'];
+$total_pages = $page_result['total_pages'];
 $customers = getAllCustomers();
 $warehouses = getWarehousesForUser($user_id); // only the user's own warehouse(s) — or all, if untagged
 
-// Statistics
-$total_containers = count($containers);
-$pending_count = count(array_filter($containers, fn($c) => $c->status == 'pending'));
-$in_progress_count = count(array_filter($containers, fn($c) => $c->status == 'in_progress'));
-$completed_count = count(array_filter($containers, fn($c) => $c->status == 'completed'));
-$reviewed_count = count(array_filter($containers, fn($c) => $c->status == 'reviewed'));
-$inbound_count = count(array_filter($containers, fn($c) => $c->type == 'inbound'));
-$outbound_count = count(array_filter($containers, fn($c) => $c->type == 'outbound'));
+// Statistics - fast aggregate query instead of counting a fully-loaded array
+$stats = getContainerStats($user_id);
+$total_containers = $stats['total'];
+$pending_count = $stats['pending'];
+$in_progress_count = $stats['in_progress'];
+$completed_count = $stats['completed'];
+$reviewed_count = $stats['reviewed'];
+$inbound_count = $stats['inbound'];
+$outbound_count = $stats['outbound'];
 
 $csrf = Token::generate();
 ?>
@@ -453,15 +465,6 @@ $csrf = Token::generate();
             </div>
 
             <!-- Data Table -->
-            <?php if (empty($containers)): ?>
-            <div class="data-table-container">
-                <div class="empty-state">
-                    <i class="fa fa-inbox"></i>
-                    <h3>No Containers Found</h3>
-                    <p>Create your first container to get started</p>
-                </div>
-            </div>
-            <?php else: ?>
             <div class="data-table-container">
                 <table class="data-table" id="containerTable">
                     <thead>
@@ -481,67 +484,21 @@ $csrf = Token::generate();
                             <th>Actions</th>
                         </tr>
                     </thead>
-                    <tbody>
-                        <?php foreach ($containers as $container): ?>
-                        <tr data-type="<?php echo $container->type; ?>" 
-                            data-status="<?php echo $container->status; ?>" 
-                            data-client="<?php echo htmlspecialchars($container->customer_name ?? ''); ?>"
-                            data-warehouse="<?php echo htmlspecialchars($container->warehouse_name ?? ''); ?>"
-                            data-search="<?php echo strtolower($container->container_number . ' ' . ($container->seal_number ?? '') . ' ' . ($container->shipment_number ?? '') . ' ' . ($container->customer_name ?? '') . ' ' . ($container->po_bol_number ?? '') . ' ' . ($container->carrier ?? '') . ' ' . ($container->warehouse_name ?? '')); ?>"
-                            data-date="<?php echo strtotime($container->created_at); ?>"
-                            data-eventdate="<?php echo $container->receipt_ship_date ? strtotime($container->receipt_ship_date) : 0; ?>">
-                            <td><strong><?php echo htmlspecialchars($container->container_number); ?></strong></td>
-                            <td><?php echo htmlspecialchars($container->customer_name ?? '-'); ?></td>
-                            <td><?php echo htmlspecialchars($container->warehouse_name ?? '-'); ?></td>
-                            <td><?php echo htmlspecialchars($container->shipment_number ?? '-'); ?></td>
-                            <td><?php echo htmlspecialchars($container->po_bol_number ?? '-'); ?></td>
-                            <td><?php echo htmlspecialchars($container->carrier ?? '-'); ?></td>
-                            <td><?php echo htmlspecialchars($container->seal_number ?? '-'); ?></td>
-                            <td>
-                                <span class="badge-pill" style="background: <?php echo $container->type == 'inbound' ? '#dbeafe' : '#d1fae5'; ?>; color: <?php echo $container->type == 'inbound' ? '#1e40af' : '#065f46'; ?>;">
-                                    <?php echo ucfirst($container->type); ?>
-                                </span>
-                            </td>
-                            <td style="white-space: nowrap;"><?php echo $container->receipt_ship_date ? date('M d, Y', strtotime($container->receipt_ship_date)) : '-'; ?></td>
-                            <td>
-                                <?php
-                                $status_colors = [
-                                    'pending' => ['bg' => '#fef3c7', 'text' => '#92400e'],
-                                    'in_progress' => ['bg' => '#dbeafe', 'text' => '#1e40af'],
-                                    'completed' => ['bg' => '#e0e7ff', 'text' => '#3730a3'],
-                                    'reviewed' => ['bg' => '#d1fae5', 'text' => '#065f46']
-                                ];
-                                $colors = $status_colors[$container->status];
-                                ?>
-                                <span class="badge-pill" style="background: <?php echo $colors['bg']; ?>; color: <?php echo $colors['text']; ?>;">
-                                    <?php echo ucwords(str_replace('_', ' ', $container->status)); ?>
-                                </span>
-                            </td>
-                            <td><?php echo isset($container->creator_fname) ? htmlspecialchars($container->creator_fname . ' ' . $container->creator_lname) : '-'; ?></td>
-                            <td><?php echo date('M d, Y', strtotime($container->created_at)); ?></td>
-                            <td class="actions-cell">
-                                <button type="button" class="btn btn-primary btn-xs btn-icon next-status-btn" 
-                                        data-container-id="<?php echo $container->id; ?>" 
-                                        data-current-status="<?php echo $container->status; ?>" 
-                                        title="Next Status">
-                                    <i class="fa fa-arrow-right"></i>
-                                </button>
-                                <a href="container_view.php?id=<?php echo $container->id; ?>" class="btn btn-info btn-xs btn-icon" title="View">
-                                    <i class="fa fa-eye"></i>
-                                </a>
-                                <a href="container_edit.php?id=<?php echo $container->id; ?>" class="btn btn-warning btn-xs btn-icon" title="Edit">
-                                    <i class="fa fa-edit"></i>
-                                </a>
-                                <a href="container_download.php?id=<?php echo $container->id; ?>" class="btn btn-success btn-xs btn-icon" title="Download">
-                                    <i class="fa fa-download"></i>
-                                </a>
-                            </td>
-                        </tr>
-                        <?php endforeach; ?>
+                    <tbody id="containerTableBody">
+                        <?php foreach ($containers as $container) { echo renderContainerDesktopRow($container); } ?>
                     </tbody>
                 </table>
+                <div id="desktopEmptyState" class="empty-state" style="<?php echo empty($containers) ? '' : 'display:none;'; ?>">
+                    <i class="fa fa-inbox"></i>
+                    <h3>No Containers Found</h3>
+                    <p>Try adjusting your filters, or create your first container to get started.</p>
+                </div>
             </div>
-            <?php endif; ?>
+            <div class="cf-pagination" id="desktopPagination" style="display:<?php echo empty($containers) ? 'none' : 'flex'; ?>;align-items:center;justify-content:center;gap:12px;padding:14px 0;">
+                <button type="button" class="btn btn-default btn-sm" id="prevPageBtn" disabled><i class="fa fa-chevron-left"></i> Prev</button>
+                <span id="pageIndicator" style="font-size:13px;color:#4b5563;">Page 1 of <?php echo $total_pages; ?></span>
+                <button type="button" class="btn btn-default btn-sm" id="nextPageBtn" <?php echo $total_pages <= 1 ? 'disabled' : ''; ?>>Next <i class="fa fa-chevron-right"></i></button>
+            </div>
         </div>
 
         <!-- MOBILE DASHBOARD -->
@@ -615,56 +572,22 @@ $csrf = Token::generate();
             </label>
 
             <!-- Mobile Container Tiles — tap to view -->
-            <?php if (empty($containers)): ?>
-            <div style="text-align:center;padding:40px 20px;color:#9ca3af;">
-                <i class="fa fa-inbox" style="font-size:40px;margin-bottom:12px;opacity:.3;display:block;"></i>
-                <p>No containers yet. Tap a button above to create one.</p>
-            </div>
-            <?php else: ?>
-            <div id="mobileNoResults" style="display:none;text-align:center;padding:30px 20px;color:#9ca3af;">
+            <div id="mobileNoResults" style="<?php echo empty($containers) ? '' : 'display:none;'; ?>text-align:center;padding:30px 20px;color:#9ca3af;">
                 <i class="fa fa-search" style="font-size:32px;opacity:.3;margin-bottom:10px;display:block;"></i>
-                <p>No containers match "<strong><span id="mobileNoResultsTerm"></span></strong>"</p>
+                <p id="mobileNoResultsMsg">No containers found.</p>
                 <div style="display:flex;gap:10px;justify-content:center;margin-top:12px;">
                     <a href="#" id="mobileCreateInboundSuggestion" class="btn btn-primary btn-sm"><i class="fa fa-plus"></i> Create Inbound</a>
                     <a href="#" id="mobileCreateOutboundSuggestion" class="btn btn-success btn-sm"><i class="fa fa-plus"></i> Create Outbound</a>
                 </div>
             </div>
             <div id="mobileContainerList">
-                <?php
-                $status_bg_mob   = ['pending'=>'#fef3c7','in_progress'=>'#dbeafe','completed'=>'#ede9fe','reviewed'=>'#d1fae5'];
-                $status_txt_mob  = ['pending'=>'#92400e','in_progress'=>'#1e40af','completed'=>'#5b21b6','reviewed'=>'#065f46'];
-                $status_lbl_mob  = ['pending'=>'Pending','in_progress'=>'In Progress','completed'=>'Awaiting Review','reviewed'=>'Reviewed'];
-                foreach ($containers as $container):
-                    $sbg = $status_bg_mob[$container->status]  ?? '#f3f4f6';
-                    $stx = $status_txt_mob[$container->status] ?? '#374151';
-                    $slb = $status_lbl_mob[$container->status] ?? ucfirst($container->status);
-                    $tbg = $container->type === 'inbound' ? '#dbeafe' : '#d1fae5';
-                    $ttx = $container->type === 'inbound' ? '#1e40af' : '#065f46';
-                ?>
-                <a href="container_view.php?id=<?php echo $container->id; ?>"
-                   class="mob-tile"
-                   data-status="<?php echo $container->status; ?>"
-                   data-search="<?php echo strtolower(htmlspecialchars($container->container_number . ' ' . ($container->seal_number ?? '') . ' ' . ($container->shipment_number ?? '') . ' ' . ($container->customer_name ?? '') . ' ' . ($container->po_bol_number ?? '') . ' ' . ($container->carrier ?? '') . ' ' . ($container->warehouse_name ?? ''))); ?>">
-                    <div class="mob-tile-top">
-                        <div class="mob-tile-num"><?php echo htmlspecialchars($container->container_number); ?></div>
-                        <span class="mob-tile-status" style="background:<?php echo $sbg; ?>;color:<?php echo $stx; ?>;"><?php echo $slb; ?></span>
-                    </div>
-                    <div class="mob-tile-bottom">
-                        <span class="mob-tile-type" style="background:<?php echo $tbg; ?>;color:<?php echo $ttx; ?>;"><?php echo ucfirst($container->type); ?></span>
-                        <?php if ($container->customer_name): ?>
-                        <span class="mob-tile-client"><?php echo htmlspecialchars($container->customer_name); ?></span>
-                        <?php endif; ?>
-                        <?php if (!empty($container->warehouse_name)): ?>
-                        <span class="mob-tile-client"><i class="fa fa-building-o"></i> <?php echo htmlspecialchars($container->warehouse_name); ?></span>
-                        <?php endif; ?>
-                        <?php if (!empty($container->photo_count)): ?>
-                        <span class="mob-tile-photos"><i class="fa fa-camera"></i> <?php echo $container->photo_count; ?></span>
-                        <?php endif; ?>
-                    </div>
-                </a>
-                <?php endforeach; ?>
+                <?php foreach ($containers as $container) { echo renderContainerMobileTile($container); } ?>
             </div>
-            <?php endif; ?>
+            <div class="cf-pagination" id="mobilePagination" style="display:<?php echo empty($containers) ? 'none' : 'flex'; ?>;align-items:center;justify-content:center;gap:12px;padding:14px 0;">
+                <button type="button" class="btn btn-default btn-sm" id="mobilePrevPageBtn" disabled><i class="fa fa-chevron-left"></i> Prev</button>
+                <span id="mobilePageIndicator" style="font-size:13px;color:#4b5563;">Page 1 of <?php echo $total_pages; ?></span>
+                <button type="button" class="btn btn-default btn-sm" id="mobileNextPageBtn" <?php echo $total_pages <= 1 ? 'disabled' : ''; ?>>Next <i class="fa fa-chevron-right"></i></button>
+            </div>
         </div>
 
     </div>
@@ -793,133 +716,101 @@ $(document).ready(function() {
             showRewardModal({ threshold: <?php echo $reward_threshold; ?>, review_url: '<?php echo addslashes($reward_review_url); ?>' });
         });
     });
-    // Desktop filtering
-    function isDoneStatus(status) {
-        // Completed means "floor work is done, awaiting supervisor review" -
-        // supervisors need to actually see these, so only Reviewed (the
-        // true end state, after photos have been sent) gets hidden by default.
-        return status === 'reviewed';
+    // ── Server-side paginated fetch (replaces the old client-side
+    // filter/sort, which required loading every container up front) ──
+    var cfBaseUrl = '<?php echo $us_url_root; ?>';
+    var cfState = { page: 1, sort: 'date', dir: 'desc' };
+    var cfFetchSeq = 0; // guards against an older, slower request overwriting a newer one
+
+    function cfCurrentFilters() {
+        return {
+            search: ($('#searchInput').val() || $('#mobileSearch').val() || '').trim(),
+            type: $('#typeFilter').val() || '',
+            status: $('#statusFilter').val() || '',
+            client: ($('#clientFilter').length ? $('#clientFilter').val() : '') || '',
+            warehouse: ($('#warehouseFilter').length ? $('#warehouseFilter').val() : '') || '',
+            show_reviewed: ($('#showCompletedToggle').is(':checked') || $('#mobileShowCompletedToggle').is(':checked')) ? '1' : '0',
+        };
     }
-    
-    function filterTable() {
-        var searchText = $('#searchInput').val().toLowerCase();
-        var typeFilter = $('#typeFilter').val();
-        var statusFilter = $('#statusFilter').val();
-        var clientFilter = $('#clientFilter').length ? $('#clientFilter').val() : '';
-        var warehouseFilter = $('#warehouseFilter').length ? $('#warehouseFilter').val() : '';
-        var showCompleted = $('#showCompletedToggle').is(':checked');
-        
-        $('#containerTable tbody tr').each(function() {
-            var $row = $(this);
-            var searchData = $row.data('search');
-            var type = $row.data('type');
-            var status = String($row.data('status'));
-            var client = String($row.data('client') || '');
-            var warehouse = String($row.data('warehouse') || '');
-            
-            var searchMatch = !searchText || searchData.indexOf(searchText) !== -1;
-            var typeMatch = !typeFilter || type === typeFilter;
-            var statusMatch = !statusFilter || status === statusFilter;
-            var clientMatch = !clientFilter || client === clientFilter;
-            var warehouseMatch = !warehouseFilter || warehouse === warehouseFilter;
-            
-            // Hide completed/reviewed by default, unless the toggle is on
-            // or the person explicitly picked that status from the dropdown.
-            var completedMatch = showCompleted || !isDoneStatus(status) || statusFilter === status;
-            
-            if (searchMatch && typeMatch && statusMatch && clientMatch && warehouseMatch && completedMatch) {
-                $row.show();
-            } else {
-                $row.hide();
+
+    function cfLoadPage(page) {
+        cfState.page = page;
+        var mySeq = ++cfFetchSeq;
+        var filters = cfCurrentFilters();
+
+        $('#prevPageBtn, #nextPageBtn, #mobilePrevPageBtn, #mobileNextPageBtn').prop('disabled', true);
+
+        var data = Object.assign({}, filters, { page: cfState.page, sort: cfState.sort, dir: cfState.dir });
+
+        $.ajax({
+            url: cfBaseUrl + 'usersc/ajax/container_list.php',
+            type: 'GET',
+            data: data,
+            dataType: 'json'
+        }).done(function(resp) {
+            if (mySeq !== cfFetchSeq || !resp.success) return; // a newer request already landed, or this one failed
+
+            $('#containerTableBody').html(resp.desktop_html);
+            $('#mobileContainerList').html(resp.mobile_html);
+
+            var hasResults = resp.total > 0;
+            $('#desktopEmptyState').toggle(!hasResults);
+            $('#desktopPagination').toggle(hasResults);
+            $('#mobileNoResults').toggle(!hasResults);
+            $('#mobileContainerList').toggle(hasResults);
+            $('#mobilePagination').toggle(hasResults);
+            if (!hasResults) {
+                var term = filters.search;
+                $('#mobileNoResultsMsg').text(term ? 'No containers match "' + term + '".' : 'No containers found.');
+                var enc = encodeURIComponent(term.toUpperCase());
+                $('#mobileCreateInboundSuggestion').attr('href', 'container_create.php?type=inbound&container_number=' + enc);
+                $('#mobileCreateOutboundSuggestion').attr('href', 'container_create.php?type=outbound&container_number=' + enc);
             }
+
+            $('#pageIndicator, #mobilePageIndicator').text('Page ' + resp.page + ' of ' + resp.total_pages);
+            $('#prevPageBtn, #mobilePrevPageBtn').prop('disabled', resp.page <= 1);
+            $('#nextPageBtn, #mobileNextPageBtn').prop('disabled', resp.page >= resp.total_pages);
+        }).always(function() {
+            $('#prevPageBtn').prop('disabled', cfState.page <= 1);
+            $('#mobilePrevPageBtn').prop('disabled', cfState.page <= 1);
         });
     }
-    
-    $('#searchInput, #typeFilter, #statusFilter, #clientFilter, #warehouseFilter').on('input change', filterTable);
-    $('#showCompletedToggle').on('change', filterTable);
-    
-    // Run once on load so completed/reviewed start hidden
-    filterTable();
-    
-    // Desktop sorting
+
+    // Debounced search - avoid firing a request on every keystroke
+    var cfSearchTimeout;
+    function cfDebouncedSearch() {
+        clearTimeout(cfSearchTimeout);
+        cfSearchTimeout = setTimeout(function() { cfLoadPage(1); }, 300);
+    }
+
+    $('#searchInput, #mobileSearch').on('input', cfDebouncedSearch);
+    $('#typeFilter, #statusFilter, #clientFilter, #warehouseFilter').on('change', function() { cfLoadPage(1); });
+    $('#showCompletedToggle, #mobileShowCompletedToggle').on('change', function() {
+        // Keep the desktop and mobile toggles in sync with each other,
+        // since they're really the same underlying filter
+        var checked = $(this).is(':checked');
+        $('#showCompletedToggle, #mobileShowCompletedToggle').prop('checked', checked);
+        cfLoadPage(1);
+    });
+
+    $('#prevPageBtn, #mobilePrevPageBtn').on('click', function() { if (cfState.page > 1) cfLoadPage(cfState.page - 1); });
+    $('#nextPageBtn, #mobileNextPageBtn').on('click', function() { cfLoadPage(cfState.page + 1); });
+
+    // Sorting - now asks the server to re-sort and re-fetch page 1,
+    // instead of re-ordering DOM rows that were already loaded
     $('.sortable').on('click', function() {
         var $th = $(this);
         var sortType = $th.data('sort');
-        var $tbody = $('#containerTable tbody');
-        var rows = $tbody.find('tr').toArray();
-        
         var ascending = !$th.hasClass('sorted-asc');
-        
+
         $('.sortable').removeClass('sorted-asc sorted-desc');
         $th.addClass(ascending ? 'sorted-asc' : 'sorted-desc');
-        
-        rows.sort(function(a, b) {
-            var aVal, bVal;
-            
-            switch(sortType) {
-                case 'date':
-                    aVal = $(a).data('date');
-                    bVal = $(b).data('date');
-                    break;
-                case 'container':
-                    aVal = $(a).find('td:eq(0)').text();
-                    bVal = $(b).find('td:eq(0)').text();
-                    break;
-                case 'client':
-                    aVal = $(a).find('td:eq(1)').text();
-                    bVal = $(b).find('td:eq(1)').text();
-                    break;
-                case 'warehouse':
-                    aVal = $(a).data('warehouse');
-                    bVal = $(b).data('warehouse');
-                    break;
-                case 'shipment':
-                    aVal = $(a).find('td:eq(3)').text();
-                    bVal = $(b).find('td:eq(3)').text();
-                    break;
-                case 'pobol':
-                    aVal = $(a).find('td:eq(4)').text();
-                    bVal = $(b).find('td:eq(4)').text();
-                    break;
-                case 'carrier':
-                    aVal = $(a).find('td:eq(5)').text();
-                    bVal = $(b).find('td:eq(5)').text();
-                    break;
-                case 'seal':
-                    aVal = $(a).find('td:eq(6)').text();
-                    bVal = $(b).find('td:eq(6)').text();
-                    break;
-                case 'type':
-                    aVal = $(a).data('type');
-                    bVal = $(b).data('type');
-                    break;
-                case 'eventdate':
-                    aVal = $(a).data('eventdate');
-                    bVal = $(b).data('eventdate');
-                    break;
-                case 'status':
-                    aVal = $(a).data('status');
-                    bVal = $(b).data('status');
-                    break;
-                case 'creator':
-                    aVal = $(a).find('td:eq(10)').text();
-                    bVal = $(b).find('td:eq(10)').text();
-                    break;
-            }
-            
-            if (ascending) {
-                return aVal > bVal ? 1 : -1;
-            } else {
-                return aVal < bVal ? 1 : -1;
-            }
-        });
-        
-        $.each(rows, function(index, row) {
-            $tbody.append(row);
-        });
+
+        cfState.sort = sortType;
+        cfState.dir = ascending ? 'asc' : 'desc';
+        cfLoadPage(1);
     });
-    
-    // Mobile search + Show Completed toggle
+
     // ── Mobile stats toggle ───────────────────────────────────────────
     var mobStatsOpen = false;
     document.getElementById('mobStatsToggle').addEventListener('click', function() {
@@ -928,38 +819,6 @@ $(document).ready(function() {
         document.getElementById('mobStatsChevron').style.transform = mobStatsOpen ? 'rotate(180deg)' : '';
     });
 
-    // ── Mobile filter (tiles) ─────────────────────────────────────────
-    function filterMobileCards() {
-        var searchText    = $('#mobileSearch').val().toLowerCase();
-        var showReviewed  = $('#mobileShowCompletedToggle').is(':checked');
-        var visibleCount  = 0;
-
-        $('.mob-tile').each(function() {
-            var $t      = $(this);
-            var status  = $t.attr('data-status') || '';
-            var search  = $t.attr('data-search') || '';
-            var match   = (!searchText || search.indexOf(searchText) !== -1);
-            var visible = match && (showReviewed || status !== 'reviewed');
-            $t.toggle(visible);
-            if (visible) visibleCount++;
-        });
-
-        var rawSearch = $('#mobileSearch').val().trim();
-        if (rawSearch && visibleCount === 0) {
-            $('#mobileNoResultsTerm').text(rawSearch);
-            var enc = encodeURIComponent(rawSearch.toUpperCase());
-            $('#mobileCreateInboundSuggestion').attr('href', 'container_create.php?type=inbound&container_number=' + enc);
-            $('#mobileCreateOutboundSuggestion').attr('href', 'container_create.php?type=outbound&container_number=' + enc);
-            $('#mobileNoResults').show();
-        } else {
-            $('#mobileNoResults').hide();
-        }
-    }
-
-    $('#mobileSearch').on('input', filterMobileCards);
-    $('#mobileShowCompletedToggle').on('change', filterMobileCards);
-    filterMobileCards(); // hide reviewed on load
-    
     // ===== Next Status button (shared modal for all rows/cards) =====
     var nextStatusCsrf = '<?php echo $csrf; ?>';
     var nextStatusBaseUrl = '<?php echo $us_url_root; ?>';

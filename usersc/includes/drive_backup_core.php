@@ -48,13 +48,23 @@ function runDriveBackup($pdo, $site_root) {
     }
     $access_token = $token_result['access_token'];
 
+    // Only back up containers that are fully done - Reviewed, not just
+    // Completed. Previously this picked up EVERY container with new/
+    // unbacked-up photos regardless of status — including ones still
+    // 'pending' or 'in_progress', where a nightly run could catch a
+    // container mid-upload. The existing catch-up logic (photos newer
+    // than drive_backed_up_at) already retries later if more photos get
+    // added after backup, so this is a belt-and-suspenders fix, not a
+    // replacement for that — but it stops a backup from running against
+    // a container someone is actively still working on tonight.
     $sql = "SELECT c.*,
             cu.name as customer_name,
             (SELECT MAX(uploaded_at) FROM container_photos WHERE container_id = c.id) as latest_photo_at
             FROM containers c
             LEFT JOIN customers cu ON c.customer_id = cu.id
-            WHERE c.drive_backed_up_at IS NULL
-               OR (SELECT MAX(uploaded_at) FROM container_photos WHERE container_id = c.id) > c.drive_backed_up_at";
+            WHERE c.status = 'reviewed'
+              AND (c.drive_backed_up_at IS NULL
+               OR (SELECT MAX(uploaded_at) FROM container_photos WHERE container_id = c.id) > c.drive_backed_up_at)";
 
     $stmt = $pdo->query($sql);
     $containers = $stmt->fetchAll(PDO::FETCH_OBJ);
