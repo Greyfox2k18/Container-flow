@@ -2,6 +2,7 @@
 require_once '../users/init.php';
 require_once $abs_us_root.$us_url_root.'users/includes/template/prep.php';
 require_once $abs_us_root.$us_url_root.'usersc/includes/container_functions.php';
+require_once $abs_us_root.$us_url_root.'usersc/includes/sku_scan_functions.php';
 
 if (!securePage($_SERVER['PHP_SELF'])) {
     die();
@@ -37,6 +38,17 @@ $creator = $db->query("SELECT fname, lname, email FROM users WHERE id = ?", [$co
 
 // Get customer/client info
 $customer = $container->customer_id ? getCustomerById($container->customer_id) : null;
+
+// SKU scan summary for this container (tool is optional/newer than this
+// page, so tolerate the tables not existing yet on an install that
+// hasn't opened sku_scan.php or customer_edit.php since it was added).
+$scan_enabled_for_customer = $customer ? !empty($customer->sku_scan_enabled) : false;
+$scan_summary = null;
+try {
+    $scan_summary = getScanSummaryForContainer($container_id);
+} catch (\Throwable $e) {
+    $scan_summary = null;
+}
 
 // Get activity log
 $activity_log = $db->query("SELECT al.*, u.fname, u.lname FROM container_activity_log al 
@@ -292,6 +304,34 @@ $csrf = Token::generate();
                     </div>
                 </div>
 
+                <?php if ($scan_enabled_for_customer || ($scan_summary && (int) $scan_summary->lot_count > 0)): ?>
+                <!-- SKU Scans -->
+                <div class="panel panel-info">
+                    <div class="panel-heading">
+                        <h3 class="panel-title">SKU Scans</h3>
+                    </div>
+                    <div class="panel-body">
+                        <?php if ($scan_summary && (int) $scan_summary->lot_count > 0): ?>
+                        <p style="margin-bottom: 14px;">
+                            <strong><?php echo (int) $scan_summary->sku_count; ?></strong> SKU<?php echo (int) $scan_summary->sku_count === 1 ? '' : 's'; ?>,
+                            <strong><?php echo (int) $scan_summary->lot_count; ?></strong> lot<?php echo (int) $scan_summary->lot_count === 1 ? '' : 's'; ?>,
+                            <strong><?php echo (int) $scan_summary->qty_total; ?></strong> total qty scanned.
+                        </p>
+                        <a href="sku_scan_export_container.php?container_id=<?php echo $container->id; ?>&csrf=<?php echo urlencode($csrf); ?>" class="btn btn-success btn-block" target="_blank">
+                            <i class="fa fa-file-excel-o"></i> Export All to Excel
+                        </a>
+                        <?php else: ?>
+                        <p class="text-muted" style="margin-bottom: 14px;">No lots scanned for this container yet.</p>
+                        <?php endif; ?>
+                        <?php if ($scan_enabled_for_customer): ?>
+                        <a href="sku_scan.php?container_id=<?php echo $container->id; ?>" class="btn btn-info btn-block" style="margin-top: 8px;">
+                            <i class="fa fa-barcode"></i> Scan Lots
+                        </a>
+                        <?php endif; ?>
+                    </div>
+                </div>
+                <?php endif; ?>
+
                 <!-- Activity Log -->
                 <div class="panel panel-default">
                     <div class="panel-heading">
@@ -371,6 +411,11 @@ $csrf = Token::generate();
         <a href="container_edit.php?id=<?php echo $container->id; ?>" class="btn btn-warning btn-block btn-lg">
             <i class="fa fa-edit"></i> Edit Container
         </a>
+        <?php if ($scan_enabled_for_customer): ?>
+        <a href="sku_scan.php?container_id=<?php echo $container->id; ?>" class="btn btn-info btn-block btn-lg">
+            <i class="fa fa-barcode"></i> Scan SKU Lots
+        </a>
+        <?php endif; ?>
         <?php if ($is_supervisor): ?>
         <a href="container_email.php?id=<?php echo $container->id; ?>" class="btn btn-primary btn-block btn-lg">
             <i class="fa fa-envelope"></i> Send Email
