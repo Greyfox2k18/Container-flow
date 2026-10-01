@@ -574,6 +574,7 @@ function updateCustomer($customer_id, $data) {
     $db = DB::getInstance();
     return $db->update('customers', $customer_id, [
         'name' => $data['name'],
+		'sku_scan_enabled' => $data['sku_scan_enabled'] ?? 0,
         'contact_name' => $data['contact_name'] ?: null,
         'email' => $data['email'] ?: null,
         'notification_emails_inbound' => $data['notification_emails_inbound'] ?: null,

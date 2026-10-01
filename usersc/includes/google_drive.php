@@ -210,3 +210,99 @@ function driveUploadFile($access_token, $file_path, $file_name, $parent_folder_i
 
     return ['id' => $data['id'], 'name' => $data['name'] ?? $file_name];
 }
+
+/**
+ * Finds a file by name inside a parent folder (unlike
+ * driveFindOrCreateFolder, not restricted to folders). Returns
+ * ['id' => ..., 'link' => ...] if found, null if genuinely not found,
+ * or ['error' => ...] if the search itself failed (these are distinct -
+ * a failed search should never be treated the same as "not found",
+ * since that would risk creating a duplicate instead of surfacing the
+ * problem).
+ */
+function driveFindFile($access_token, $file_name, $parent_id) {
+    $escaped_name = str_replace("'", "\\'", $file_name);
+    $q = "name = '{$escaped_name}' and '{$parent_id}' in parents and trashed = false";
+
+    $result = driveApiGet($access_token, 'https://www.googleapis.com/drive/v3/files', [
+        'q' => $q,
+        'fields' => 'files(id,webViewLink)',
+    ]);
+
+    if (!empty($result['error'])) {
+        $detail = $result['error']['message'] ?? json_encode($result['error']);
+        return ['error' => "Could not search for file: {$detail}"];
+    }
+    if (!empty($result['files'][0]['id'])) {
+        return ['id' => $result['files'][0]['id'], 'link' => $result['files'][0]['webViewLink'] ?? null];
+    }
+    return null;
+}
+
+/**
+ * Replaces the CONTENT of an existing Drive file in place - same file
+ * ID, same webViewLink, same sharing settings. Used to push a
+ * recompressed local photo up without creating a duplicate alongside
+ * the old, larger copy.
+ * Returns ['id' => ..., 'name' => ...] on success, ['error' => ...] on failure.
+ */
+function driveUpdateFileContent($access_token, $file_id, $file_path, $mime_type) {
+    if (!file_exists($file_path)) {
+        return ['error' => 'File not found on disk: ' . $file_path];
+    }
+
+    $ch = curl_init("https://www.googleapis.com/upload/drive/v3/files/{$file_id}?uploadType=media");
+    curl_setopt($ch, CURLOPT_CUSTOMREQUEST, 'PATCH');
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 120);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, [
+        'Authorization: Bearer ' . $access_token,
+        'Content-Type: ' . $mime_type,
+    ]);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, file_get_contents($file_path));
+    $response = curl_exec($ch);
+    $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $curl_error = curl_error($ch);
+    curl_close($ch);
+
+    if ($curl_error) {
+        return ['error' => 'Connection error: ' . $curl_error];
+    }
+
+    $data = json_decode($response, true);
+    if ($http_code !== 200 || empty($data['id'])) {
+        $detail = $data['error']['message'] ?? $response;
+        return ['error' => "Update failed (HTTP {$http_code}): {$detail}"];
+    }
+
+    return ['id' => $data['id'], 'name' => $data['name'] ?? basename($file_path)];
+}
+
+/**
+ * The safe entry point backups should use instead of calling
+ * driveUploadFile() directly: looks for an existing file with this name
+ * in the folder first, and updates it in place if found, instead of
+ * blindly creating a new file every time - which Drive allows even for
+ * an identical name, silently producing duplicates on any re-run (e.g.
+ * re-backing-up a container after its local photos were recompressed).
+ * Returns the same shape as driveUploadFile(), plus 'replaced' => bool.
+ */
+function driveUploadOrReplaceFile($access_token, $file_path, $file_name, $parent_folder_id, $mime_type) {
+    $existing = driveFindFile($access_token, $file_name, $parent_folder_id);
+
+    if (is_array($existing) && !empty($existing['error'])) {
+        // The search itself failed - don't fall through to create, which
+        // could produce a duplicate if the file actually does exist.
+        return $existing;
+    }
+
+    if ($existing && !empty($existing['id'])) {
+        $result = driveUpdateFileContent($access_token, $existing['id'], $file_path, $mime_type);
+        if (!empty($result['error'])) return $result;
+        return ['id' => $result['id'], 'name' => $result['name'], 'replaced' => true];
+    }
+
+    $result = driveUploadFile($access_token, $file_path, $file_name, $parent_folder_id, $mime_type);
+    if (!empty($result['error'])) return $result;
+    return ['id' => $result['id'], 'name' => $result['name'], 'replaced' => false];
+}

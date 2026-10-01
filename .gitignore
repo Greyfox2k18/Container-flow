@@ -59,3 +59,4 @@ usersc/includes/security_headers.php
 usersc/includes/totp_key.php
 usersc/includes/user_agreement.php
 usersc/includes/user_manager_columns.php
+usersc/logs/

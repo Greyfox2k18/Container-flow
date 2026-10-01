@@ -37,7 +37,7 @@ function getMimeTypeForPhoto($filename) {
  * @param string $site_root Absolute filesystem path to the site root
  * @return array ['success' => bool, 'log' => string[], 'success_count' => int, 'fail_count' => int]
  */
-function runDriveBackup($pdo, $site_root) {
+function runDriveBackup($pdo, $site_root, $progress_callback = null) {
     $log = [];
     $log[] = '[' . date('Y-m-d H:i:s') . '] Starting Drive backup run';
 
@@ -70,6 +70,8 @@ function runDriveBackup($pdo, $site_root) {
     $containers = $stmt->fetchAll(PDO::FETCH_OBJ);
 
     $log[] = 'Found ' . count($containers) . ' container(s) needing backup';
+    $total_containers = count($containers);
+    $processed = 0;
 
     $success_count = 0;
     $fail_count = 0;
@@ -81,6 +83,8 @@ function runDriveBackup($pdo, $site_root) {
     foreach ($containers as $container) {
         // Nothing to back up yet if there are no photos at all
         if (empty($container->latest_photo_at)) {
+            $processed++;
+            if ($progress_callback) $progress_callback($processed, $total_containers, $success_count, $fail_count, $container);
             continue;
         }
 
@@ -97,6 +101,8 @@ function runDriveBackup($pdo, $site_root) {
             $error_detail = $client_folder['error'] ?? 'Unknown error';
             $log[] = "FAILED: Could not create/find client folder \"{$client_name}\" for container #{$container->id} ({$container->container_number}): {$error_detail}";
             $fail_count++;
+            $processed++;
+            if ($progress_callback) $progress_callback($processed, $total_containers, $success_count, $fail_count, $container);
             continue;
         }
 
@@ -107,6 +113,8 @@ function runDriveBackup($pdo, $site_root) {
             $error_detail = $folder['error'] ?? 'Unknown error';
             $log[] = "FAILED: Could not create/find Drive folder for container #{$container->id} ({$container->container_number}): {$error_detail}";
             $fail_count++;
+            $processed++;
+            if ($progress_callback) $progress_callback($processed, $total_containers, $success_count, $fail_count, $container);
             continue;
         }
 
@@ -120,7 +128,7 @@ function runDriveBackup($pdo, $site_root) {
         foreach ($photos as $photo) {
             $file_path = rtrim($site_root, '/') . '/' . $photo->file_path;
             $mime = getMimeTypeForPhoto($photo->file_name);
-            $result = driveUploadFile($access_token, $file_path, $photo->file_name, $folder['id'], $mime);
+            $result = driveUploadOrReplaceFile($access_token, $file_path, $photo->file_name, $folder['id'], $mime);
 
             if (!empty($result['error'])) {
                 $log[] = "  - Photo upload failed ({$photo->file_name}) for container #{$container->id}: " . $result['error'];
@@ -144,7 +152,7 @@ function runDriveBackup($pdo, $site_root) {
 
         $tmp_path = sys_get_temp_dir() . '/container_' . $container->id . '_summary.txt';
         file_put_contents($tmp_path, $summary);
-        driveUploadFile($access_token, $tmp_path, 'container_info.txt', $folder['id'], 'text/plain');
+        driveUploadOrReplaceFile($access_token, $tmp_path, 'container_info.txt', $folder['id'], 'text/plain');
         @unlink($tmp_path);
 
         if ($errors === 0) {
@@ -156,6 +164,9 @@ function runDriveBackup($pdo, $site_root) {
             $log[] = "PARTIAL: Container #{$container->id} ({$container->container_number}) - {$uploaded} uploaded, {$errors} failed - will retry next run";
             $fail_count++;
         }
+
+        $processed++;
+        if ($progress_callback) $progress_callback($processed, $total_containers, $success_count, $fail_count, $container);
     }
 
     $log[] = '[' . date('Y-m-d H:i:s') . "] Backup run complete: {$success_count} succeeded, {$fail_count} failed/partial";

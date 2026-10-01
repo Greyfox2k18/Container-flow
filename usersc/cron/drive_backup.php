@@ -37,8 +37,27 @@ try {
     exit(1);
 }
 
-$result = runDriveBackup($pdo, DRIVE_BACKUP_SITE_ROOT);
+echo "Starting Drive backup run...\n\n";
+
+$run_start_time = time();
+$progress = function ($processed, $total, $success_count, $fail_count, $container) use ($run_start_time) {
+    $elapsed = max(1, time() - $run_start_time);
+    $rate = $processed / $elapsed; // containers per second
+    $remaining = $total - $processed;
+    $eta_seconds = $rate > 0 ? (int) round($remaining / $rate) : 0;
+    $eta = $eta_seconds >= 60 ? round($eta_seconds / 60) . 'm' : $eta_seconds . 's';
+    $pct = $total > 0 ? round(100 * $processed / $total) : 100;
+
+    echo sprintf(
+        "  [%3d%%] %d / %d containers - ok: %d, failed/partial: %d - last: %s - est. remaining: %s\n",
+        $pct, $processed, $total, $success_count, $fail_count, $container->container_number, $eta
+    );
+};
+
+$result = runDriveBackup($pdo, DRIVE_BACKUP_SITE_ROOT, $progress);
 $log_text = writeDriveBackupLog($result['log']);
 
+$total_elapsed = time() - $run_start_time;
+echo "\nDone in " . ($total_elapsed >= 60 ? round($total_elapsed / 60, 1) . " minutes" : "{$total_elapsed} seconds") . ".\n\n";
 echo $log_text;
 exit($result['success'] ? 0 : 1);

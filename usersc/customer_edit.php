@@ -2,6 +2,7 @@
 require_once '../users/init.php';
 require_once $abs_us_root.$us_url_root.'users/includes/template/prep.php';
 require_once $abs_us_root.$us_url_root.'usersc/includes/container_functions.php';
+require_once $abs_us_root.$us_url_root.'usersc/includes/sku_scan_functions.php';
 
 if (!securePage($_SERVER['PHP_SELF'])) {
     die();
@@ -21,6 +22,11 @@ if (!$customer) {
     Redirect::to('customer_list.php');
 }
 
+// Adds customers.sku_scan_enabled the first time this page loads after
+// the SKU scan tool was installed — safe to call every time.
+ensureCustomerScanColumn();
+$customer = getCustomerById($customer_id); // re-fetch so the new column is present
+
 $errors = [];
 $success = '';
 
@@ -37,6 +43,7 @@ if (Input::exists()) {
         $retention_days = ($retention_days_raw !== '' && $retention_days_raw !== null) ? (int) $retention_days_raw : 90;
         $delete_after_days_raw = Input::get('delete_after_days');
         $delete_after_days = ($delete_after_days_raw !== '' && $delete_after_days_raw !== null) ? (int) $delete_after_days_raw : 30;
+        $sku_scan_enabled = Input::get('sku_scan_enabled') ? 1 : 0;
 
         if (empty($name)) {
             $errors[] = 'Client name is required.';
@@ -82,7 +89,8 @@ if (Input::exists()) {
                 'notification_emails_outbound' => $notification_emails_outbound,
                 'notes' => $notes,
                 'retention_days' => $retention_days,
-                'delete_after_days' => $delete_after_days
+                'delete_after_days' => $delete_after_days,
+                'sku_scan_enabled' => $sku_scan_enabled
             ]);
 
             $success = 'Client updated successfully!';
@@ -167,6 +175,18 @@ if (Input::exists()) {
                                 <textarea class="form-control" id="notification_emails_outbound" name="notification_emails_outbound" rows="2"><?php echo htmlspecialchars($customer->notification_emails_outbound ?? ''); ?></textarea>
                                 <small class="form-text text-muted">
                                     Receives photos automatically when an <strong>outbound</strong> container for this client is marked Completed. One email per line or comma-separated.
+                                </small>
+                            </div>
+
+                            <div class="form-group">
+                                <label style="display:flex;align-items:center;gap:8px;font-weight:normal;cursor:pointer;">
+                                    <input type="checkbox" id="sku_scan_enabled" name="sku_scan_enabled" value="1"
+                                           <?php echo !empty($customer->sku_scan_enabled) ? 'checked' : ''; ?>>
+                                    <span>Enable SKU lot scanning for this client</span>
+                                </label>
+                                <small class="form-text text-muted">
+                                    Adds a "Scan SKU Lots" button on this client's containers, for scanning in lot
+                                    numbers, expirations, and quantities per SKU and exporting them to Excel.
                                 </small>
                             </div>
 

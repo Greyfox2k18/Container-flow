@@ -10,6 +10,8 @@ ini_set('display_errors', 0);
 
 require_once '../../users/init.php';
 require_once $abs_us_root.$us_url_root.'usersc/includes/container_functions.php';
+require_once $abs_us_root.$us_url_root.'usersc/includes/photo_compression_config.php';
+require_once $abs_us_root.$us_url_root.'usersc/includes/photo_compression_core.php';
 
 ob_end_clean();
 
@@ -142,6 +144,13 @@ foreach ($_FILES['photo_files']['name'] as $key => $filename) {
     if (@move_uploaded_file($file_tmp, $file_path)) {
         // Auto-rotate JPEG based on EXIF orientation so stored files are always upright
         autoRotateImage($file_path);
+        // Shrink the stored file itself (not just email attachment copies) -
+        // this is what actually saves disk space. Live (not dry-run) since
+        // this is a brand-new upload, not touching any existing photo.
+        // compressed_at gets set immediately so the retroactive scan never
+        // re-touches this file later (JPEG recompression is lossy and
+        // compounds if re-applied).
+        compressStoredImage($file_path, PHOTO_COMPRESSION_MAX_DIM, PHOTO_COMPRESSION_QUALITY, false);
         $insert = $db->insert('container_photos', [
             'container_id' => $container_id,
             'photo_type'   => $photo_type,
@@ -149,6 +158,7 @@ foreach ($_FILES['photo_files']['name'] as $key => $filename) {
             'file_name'    => $filename,
             'description'  => $photo_description,
             'uploaded_by'  => $user_id,
+            'compressed_at' => date('Y-m-d H:i:s'),
         ]);
         if ($insert) { $uploaded_count++; }
         else { $errors[] = "DB insert failed for {$filename}"; unlink($file_path); }
