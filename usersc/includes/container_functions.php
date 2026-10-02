@@ -514,6 +514,61 @@ function getCustomerById($customer_id) {
     return $db->query("SELECT * FROM customers WHERE id = ?", [$customer_id])->first();
 }
 
+// ── Customer-warehouse assignment ───────────────────────────────────────────
+// A client can be assigned to one or more warehouses, so they only show up
+// in that warehouse's client dropdown when creating a container. Same
+// opt-in-restriction philosophy as the rest of the warehouse feature: a
+// client with NO assignment is "global" and stays visible to everyone,
+// regardless of warehouse - nothing changes until you deliberately assign one.
+
+/**
+ * Warehouse ids a customer is assigned to. Empty array means global -
+ * not restricted to any particular warehouse.
+ */
+function getCustomerWarehouseIds($customer_id) {
+    $db = DB::getInstance();
+    $rows = $db->query("SELECT warehouse_id FROM customer_warehouses WHERE customer_id = ?", [$customer_id])->results() ?: [];
+    return array_map(fn($r) => (int) $r->warehouse_id, $rows);
+}
+
+/**
+ * Replaces a customer's full set of warehouse assignments - correct
+ * behavior for a checkbox-list UI, where whatever's checked on save is
+ * the new complete set. Pass an empty array to make the customer global again.
+ */
+function saveCustomerWarehouses($customer_id, array $warehouse_ids) {
+    $db = DB::getInstance();
+    $db->query("DELETE FROM customer_warehouses WHERE customer_id = ?", [$customer_id]);
+    foreach ($warehouse_ids as $warehouse_id) {
+        $warehouse_id = (int) $warehouse_id;
+        if ($warehouse_id > 0) {
+            $db->insert('customer_warehouses', ['customer_id' => $customer_id, 'warehouse_id' => $warehouse_id]);
+        }
+    }
+}
+
+/**
+ * Customers to offer a user: global clients (no warehouse assignment -
+ * shown to everyone) plus clients assigned to at least one of the user's
+ * own warehouse(s). A user with no warehouse tags of their own sees every
+ * customer, same as everywhere else in this feature - tagging is what
+ * turns on restriction, not the mere existence of warehouses.
+ */
+function getCustomersForUser($user_id) {
+    $allowed_warehouse_ids = getUserWarehouseIds($user_id);
+    if (empty($allowed_warehouse_ids)) {
+        return getAllCustomers();
+    }
+
+    $db = DB::getInstance();
+    $ph = implode(',', array_fill(0, count($allowed_warehouse_ids), '?'));
+    $sql = "SELECT cu.* FROM customers cu
+            WHERE NOT EXISTS (SELECT 1 FROM customer_warehouses cw WHERE cw.customer_id = cu.id)
+               OR EXISTS (SELECT 1 FROM customer_warehouses cw WHERE cw.customer_id = cu.id AND cw.warehouse_id IN ({$ph}))
+            ORDER BY cu.name ASC";
+    return $db->query($sql, $allowed_warehouse_ids)->results() ?: [];
+}
+
 // ── Unique identifier handling ──────────────────────────────────────────────
 // containers.container_number used to have a hard DB-level UNIQUE constraint,
 // which permanently blocked reusing a number even long after that container
@@ -628,18 +683,97 @@ function getInvalidEmails($raw) {
  * container type ('inbound' or 'outbound') - clients can have a different
  * list of people notified depending on the direction of the container.
  */
-function getCustomerNotificationEmails($customer, $type = 'inbound') {
+function getCustomerNotificationEmails($customer, $type = 'inbound', $warehouse_id = null) {
     if (!$customer) {
         return [];
     }
     $field = $type === 'outbound' ? 'notification_emails_outbound' : 'notification_emails_inbound';
-    if (empty($customer->$field)) {
+    $raw = $customer->$field ?? '';
+
+    // A per-warehouse override, if one's configured for this client+warehouse
+    // and has a value for this direction, takes priority over the client's
+    // default list - e.g. a client's loads through one warehouse might need
+    // a different contact than their default notification list.
+    if ($warehouse_id) {
+        $override = getCustomerWarehouseEmailOverride($customer->id, $warehouse_id);
+        if ($override && !empty($override->$field)) {
+            $raw = $override->$field;
+        }
+    }
+
+    if (empty($raw)) {
         return [];
     }
-    $emails = parseEmailList($customer->$field);
+    $emails = parseEmailList($raw);
     return array_values(array_filter($emails, function($e) {
         return filter_var($e, FILTER_VALIDATE_EMAIL);
     }));
+}
+
+/**
+ * Per-client, per-warehouse email override - lets a client have a
+ * different notification list for loads handled by a specific
+ * warehouse, instead of always using their default inbound/outbound
+ * lists. Returns null if no override is configured for that pair (the
+ * client's default list is used instead - see getCustomerNotificationEmails()).
+ */
+function getCustomerWarehouseEmailOverride($customer_id, $warehouse_id) {
+    $db = DB::getInstance();
+    return $db->query(
+        "SELECT * FROM customer_warehouse_emails WHERE customer_id = ? AND warehouse_id = ?",
+        [$customer_id, $warehouse_id]
+    )->first();
+}
+
+/**
+ * All of a customer's per-warehouse overrides, keyed by warehouse_id -
+ * for rendering the full list of warehouses with their current override
+ * (if any) on the client edit page.
+ */
+function getCustomerWarehouseEmailOverrides($customer_id) {
+    $db = DB::getInstance();
+    $rows = $db->query("SELECT * FROM customer_warehouse_emails WHERE customer_id = ?", [$customer_id])->results() ?: [];
+    $by_warehouse = [];
+    foreach ($rows as $row) {
+        $by_warehouse[$row->warehouse_id] = $row;
+    }
+    return $by_warehouse;
+}
+
+/**
+ * Saves (or clears) one warehouse's email override for a customer.
+ * Leaving both fields blank removes the override entirely, so the
+ * client's default list applies again - blank is never saved as "an
+ * override of nothing."
+ */
+function saveCustomerWarehouseEmailOverride($customer_id, $warehouse_id, $inbound, $outbound) {
+    $db = DB::getInstance();
+    $inbound = trim((string) $inbound);
+    $outbound = trim((string) $outbound);
+
+    $existing = $db->query(
+        "SELECT id FROM customer_warehouse_emails WHERE customer_id = ? AND warehouse_id = ?",
+        [$customer_id, $warehouse_id]
+    )->first();
+
+    if ($inbound === '' && $outbound === '') {
+        if ($existing) {
+            $db->delete('customer_warehouse_emails', $existing->id);
+        }
+        return true;
+    }
+
+    $data = [
+        'customer_id' => $customer_id,
+        'warehouse_id' => $warehouse_id,
+        'notification_emails_inbound' => $inbound ?: null,
+        'notification_emails_outbound' => $outbound ?: null,
+    ];
+
+    if ($existing) {
+        return $db->update('customer_warehouse_emails', $existing->id, $data);
+    }
+    return $db->insert('customer_warehouse_emails', $data);
 }
 
 function isCustomerNameTaken($name, $exclude_id = null) {
@@ -1006,7 +1140,7 @@ function sendCompletionNotification($container_id, $triggered_by_user_id = 0) {
 
     cfLog("Customer found", ['name' => $customer->name]);
 
-    $emails = getCustomerNotificationEmails($customer, $container->type);
+    $emails = getCustomerNotificationEmails($customer, $container->type, $container->warehouse_id ?? null);
     if (empty($emails)) {
         cfLog("ABORT: no notification emails", ['customer' => $customer->name, 'type' => $container->type, 'inbound_raw' => $customer->inbound_emails ?? '', 'outbound_raw' => $customer->outbound_emails ?? '']);
         return ['sent' => false, 'reason' => 'Client has no ' . $container->type . ' notification emails on file'];

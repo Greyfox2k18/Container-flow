@@ -99,7 +99,7 @@ if (Input::exists()) {
     }
 }
 
-$customers = getAllCustomers();
+$customers = getCustomersForUser($user_id); // global clients + clients assigned to this user's warehouse(s)
 $warehouses = getWarehousesForUser($user_id);
 ?>
 

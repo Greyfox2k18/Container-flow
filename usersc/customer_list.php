@@ -13,6 +13,14 @@ if (!isSupervisor()) {
 }
 
 $customers = getAllCustomers();
+
+// Built once and reused per row below, rather than a separate query per
+// customer - just a name lookup, so this doesn't need to respect warehouse
+// access restrictions the way a container/customer list would.
+$all_warehouses_by_id = [];
+foreach (getWarehouses(false) as $w) {
+    $all_warehouses_by_id[(int) $w->id] = $w->name;
+}
 ?>
 
 <div id="page-wrapper">
@@ -53,6 +61,7 @@ $customers = getAllCustomers();
                                         <th>Contact</th>
                                         <th>Email</th>
                                         <th>Phone</th>
+                                        <th>Warehouses</th>
                                         <th>Inbound Notifications</th>
                                         <th>Outbound Notifications</th>
                                         <th>Actions</th>
@@ -63,12 +72,22 @@ $customers = getAllCustomers();
                                     <?php 
                                     $notif_inbound = getCustomerNotificationEmails($customer, 'inbound');
                                     $notif_outbound = getCustomerNotificationEmails($customer, 'outbound');
+                                    $customer_warehouse_ids = getCustomerWarehouseIds($customer->id);
                                     ?>
                                     <tr>
                                         <td><strong><?php echo htmlspecialchars($customer->name); ?></strong></td>
                                         <td><?php echo htmlspecialchars($customer->contact_name ?? '-'); ?></td>
                                         <td><?php echo htmlspecialchars($customer->email ?? '-'); ?></td>
                                         <td><?php echo htmlspecialchars($customer->phone ?? '-'); ?></td>
+                                        <td>
+                                            <?php if (empty($customer_warehouse_ids)): ?>
+                                            <span class="label label-default">All</span>
+                                            <?php else: ?>
+                                                <?php foreach ($customer_warehouse_ids as $wid): ?>
+                                                <span class="label label-info"><?php echo htmlspecialchars($all_warehouses_by_id[$wid] ?? "Warehouse #{$wid}"); ?></span>
+                                                <?php endforeach; ?>
+                                            <?php endif; ?>
+                                        </td>
                                         <td>
                                             <?php if (!empty($notif_inbound)): ?>
                                             <span class="label label-success">

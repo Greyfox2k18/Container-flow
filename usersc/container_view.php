@@ -67,17 +67,15 @@ $csrf = Token::generate();
     <div class="container-fluid">
         <div class="row">
             <div class="col-12">
-                <h1 class="page-header">
-                    Container Details
-                    <div class="pull-right">
-                        <button type="button" id="openActionsBtn" class="btn btn-default">
-                            <i class="fa fa-ellipsis-v"></i> Actions
-                        </button>
-                        <a href="container_dashboard.php" class="btn btn-default">
-                            <i class="fa fa-arrow-left"></i> Back
-                        </a>
-                    </div>
-                </h1>
+                <div class="pull-right" style="padding: 15px 0;">
+                    <button type="button" id="openActionsBtn" class="btn btn-default">
+                        <i class="fa fa-ellipsis-v"></i> Actions
+                    </button>
+                    <a href="container_dashboard.php" class="btn btn-default">
+                        <i class="fa fa-arrow-left"></i> Back
+                    </a>
+                </div>
+                <div style="clear: both;"></div>
             </div>
         </div>
 
@@ -426,7 +424,7 @@ $csrf = Token::generate();
 
 <!-- Review & Send confirmation (supervisor, Completed -> Reviewed) -->
 <div id="reviewBackdrop" class="actions-backdrop"></div>
-<div id="reviewModal" class="actions-offcanvas" style="width: 380px;">
+<div id="reviewModal" class="actions-offcanvas review-modal-wide">
     <div class="actions-offcanvas-header">
         <h4 style="margin:0;">Mark as Reviewed?</h4>
         <button type="button" id="reviewModalClose" class="close" aria-label="Close">
@@ -448,6 +446,18 @@ $csrf = Token::generate();
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/lightbox2/2.11.3/css/lightbox.min.css">
 
 <style>
+/* Prevents horizontal rubber-band scrolling on mobile Safari. This page
+   has a couple of panels (.actions-offcanvas, .review-modal-wide) that
+   are position:fixed and hidden off-screen via a negative "right" value
+   until opened. On iOS Safari specifically, off-screen fixed elements
+   like that can still let the whole page scroll sideways into view even
+   though nothing should actually be visible there - this just clamps
+   the page to its intended width regardless. */
+html, body {
+    overflow-x: hidden;
+    max-width: 100%;
+}
+
 /* ===== Bootstrap 3 component compatibility shim =====
    Some sites run a newer Bootstrap version where .panel/.label/.well
    were renamed or removed (Bootstrap 4/5 use .card/.badge instead).
@@ -719,6 +729,17 @@ $csrf = Token::generate();
 
 .actions-backdrop.show {
     display: block;
+}
+
+/* Review & Send confirmation is wider than the default offcanvas panel -
+   the hidden-state "right" offset below MUST clear this wider width or
+   part of it stays visible even when closed (that's exactly what was
+   happening before this fix: a 380px-wide panel with a right offset only
+   tuned for the default 320px panel left ~40px poking into view on every
+   page load, regardless of whether anyone had opened it). */
+.review-modal-wide {
+    width: 380px;
+    right: -400px;
 }
 
 @media (max-width: 600px) {

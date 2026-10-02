@@ -44,6 +44,31 @@ if (Input::exists()) {
         $delete_after_days_raw = Input::get('delete_after_days');
         $delete_after_days = ($delete_after_days_raw !== '' && $delete_after_days_raw !== null) ? (int) $delete_after_days_raw : 30;
         $sku_scan_enabled = Input::get('sku_scan_enabled') ? 1 : 0;
+        $assigned_warehouse_ids = Input::get('assigned_warehouses') ?: [];
+
+        // Per-warehouse email overrides - one pair of fields per warehouse,
+        // named warehouse_inbound_{id} / warehouse_outbound_{id}. Blank
+        // means "no override, use the client's default list above."
+        $all_warehouses = getWarehouses();
+        $warehouse_overrides_input = [];
+        foreach ($all_warehouses as $w) {
+            $wh_inbound = trim((string) Input::get('warehouse_inbound_' . $w->id));
+            $wh_outbound = trim((string) Input::get('warehouse_outbound_' . $w->id));
+            $warehouse_overrides_input[$w->id] = ['inbound' => $wh_inbound, 'outbound' => $wh_outbound];
+
+            if ($wh_inbound) {
+                $invalid = getInvalidEmails($wh_inbound);
+                if (!empty($invalid)) {
+                    $errors[] = "These inbound override emails for \"{$w->name}\" are not valid: " . implode(', ', $invalid);
+                }
+            }
+            if ($wh_outbound) {
+                $invalid = getInvalidEmails($wh_outbound);
+                if (!empty($invalid)) {
+                    $errors[] = "These outbound override emails for \"{$w->name}\" are not valid: " . implode(', ', $invalid);
+                }
+            }
+        }
 
         if (empty($name)) {
             $errors[] = 'Client name is required.';
@@ -93,12 +118,32 @@ if (Input::exists()) {
                 'sku_scan_enabled' => $sku_scan_enabled
             ]);
 
+            foreach ($warehouse_overrides_input as $warehouse_id => $pair) {
+                saveCustomerWarehouseEmailOverride($customer_id, $warehouse_id, $pair['inbound'], $pair['outbound']);
+            }
+
+            saveCustomerWarehouses($customer_id, $assigned_warehouse_ids);
+
             $success = 'Client updated successfully!';
             $customer = getCustomerById($customer_id);
         }
     } else {
         $errors[] = 'Invalid CSRF token.';
     }
+}
+
+$warehouses = getWarehouses();
+$warehouse_overrides = getCustomerWarehouseEmailOverrides($customer_id);
+$assigned_warehouse_ids_display = isset($assigned_warehouse_ids) ? array_map('intval', $assigned_warehouse_ids) : getCustomerWarehouseIds($customer_id);
+$warehouse_overrides_input = $warehouse_overrides_input ?? []; // only set after a POST
+
+function whOverrideFieldValue($warehouse_id, $direction, $warehouse_overrides_input, $warehouse_overrides) {
+    if (isset($warehouse_overrides_input[$warehouse_id])) {
+        return $warehouse_overrides_input[$warehouse_id][$direction];
+    }
+    $row = $warehouse_overrides[$warehouse_id] ?? null;
+    $field = 'notification_emails_' . $direction;
+    return $row ? ($row->$field ?? '') : '';
 }
 ?>
 
@@ -177,6 +222,58 @@ if (Input::exists()) {
                                     Receives photos automatically when an <strong>outbound</strong> container for this client is marked Completed. One email per line or comma-separated.
                                 </small>
                             </div>
+
+                            <?php if (!empty($warehouses)): ?>
+                            <div class="form-group">
+                                <label>Assigned Warehouses</label>
+                                <p class="form-text text-muted" style="margin-top:-4px;">
+                                    Leave none checked for this client to show up in every warehouse's client list
+                                    (the default). Check specific warehouses to limit this client to only those
+                                    warehouses' dropdowns when creating a container.
+                                </p>
+                                <?php foreach ($warehouses as $w): ?>
+                                <label style="display:block;font-weight:normal;margin-bottom:6px;">
+                                    <input type="checkbox" name="assigned_warehouses[]" value="<?php echo $w->id; ?>"
+                                           <?php echo in_array((int) $w->id, $assigned_warehouse_ids_display, true) ? 'checked' : ''; ?>>
+                                    <?php echo htmlspecialchars($w->name); ?>
+                                </label>
+                                <?php endforeach; ?>
+                            </div>
+                            <?php endif; ?>
+
+                            <?php if (!empty($warehouses)): ?>
+                            <div class="form-group">
+                                <label>Per-Warehouse Email Overrides</label>
+                                <p class="form-text text-muted" style="margin-top:-4px;">
+                                    Leave both fields blank for a warehouse to use this client's default emails above.
+                                    Only fill these in for a warehouse where this client needs <em>different</em>
+                                    people notified.
+                                </p>
+                                <?php foreach ($warehouses as $w): ?>
+                                <div style="border:1px solid #e5e7eb;border-radius:6px;padding:12px;margin-bottom:10px;">
+                                    <strong style="display:block;margin-bottom:8px;"><?php echo htmlspecialchars($w->name); ?></strong>
+                                    <div class="row">
+                                        <div class="col-sm-6">
+                                            <label for="warehouse_inbound_<?php echo $w->id; ?>" style="font-weight:normal;font-size:13px;">
+                                                <span class="label label-info">Inbound</span> override
+                                            </label>
+                                            <textarea class="form-control" id="warehouse_inbound_<?php echo $w->id; ?>"
+                                                      name="warehouse_inbound_<?php echo $w->id; ?>" rows="2"
+                                                      placeholder="Leave blank to use default"><?php echo htmlspecialchars(whOverrideFieldValue($w->id, 'inbound', $warehouse_overrides_input, $warehouse_overrides)); ?></textarea>
+                                        </div>
+                                        <div class="col-sm-6">
+                                            <label for="warehouse_outbound_<?php echo $w->id; ?>" style="font-weight:normal;font-size:13px;">
+                                                <span class="label label-success">Outbound</span> override
+                                            </label>
+                                            <textarea class="form-control" id="warehouse_outbound_<?php echo $w->id; ?>"
+                                                      name="warehouse_outbound_<?php echo $w->id; ?>" rows="2"
+                                                      placeholder="Leave blank to use default"><?php echo htmlspecialchars(whOverrideFieldValue($w->id, 'outbound', $warehouse_overrides_input, $warehouse_overrides)); ?></textarea>
+                                        </div>
+                                    </div>
+                                </div>
+                                <?php endforeach; ?>
+                            </div>
+                            <?php endif; ?>
 
                             <div class="form-group">
                                 <label style="display:flex;align-items:center;gap:8px;font-weight:normal;cursor:pointer;">
