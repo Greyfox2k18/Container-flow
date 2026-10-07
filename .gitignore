@@ -1,6 +1,7 @@
 # UserSpice core folders — not ours
 users/
-usersc/plugins/
+usersc/plugins/*
+!usersc/plugins/report_builder/
 usersc/templates/
 usersc/widgets/
 usersc/scripts/
@@ -30,7 +31,7 @@ usersc/includes/sparkpost_email.php.bak
 vendor/
 composer.json
 composer.lock
-README.md
+/README.md
 SECURITY.md
 favicon.ico
 index.php
@@ -60,3 +61,6 @@ usersc/includes/totp_key.php
 usersc/includes/user_agreement.php
 usersc/includes/user_manager_columns.php
 usersc/logs/
+
+# Delivery zips handed to Dan (not source)
+*.zip

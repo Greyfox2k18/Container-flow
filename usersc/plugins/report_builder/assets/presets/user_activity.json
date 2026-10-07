@@ -1,0 +1,44 @@
+{
+  "name": "User Activity",
+  "description": "Weekly summary of sign-ins and logged activity. Uses the built-in UserSpice datasets (admins only).",
+  "schedule": { "frequency": "weekly", "day_of_week": 1, "hour": 7 },
+  "scope_mode": "creator",
+  "attach_csv": true,
+  "recipients": [
+    { "kind": "permission", "permission_id": 2, "note": "Administrators" }
+  ],
+  "layout": {
+    "metrics": {
+      "active_users":  { "dataset": "users", "fn": "count", "filters": [{ "field": "active", "op": "eq", "value": "1" }] },
+      "signed_in":     { "dataset": "users", "fn": "count", "date_window": { "field": "last_login", "range": "last_7_days" } },
+      "login_events":  { "dataset": "user_logs", "fn": "count", "filters": [{ "field": "logtype", "op": "contains", "value": "login" }], "date_window": { "range": "last_7_days" } },
+      "log_events":    { "dataset": "user_logs", "fn": "count", "date_window": { "range": "last_7_days" } }
+    },
+    "subject": [
+      { "text": "User activity — {signed_in} user{s:signed_in} signed in this week — {date_short}" }
+    ],
+    "blocks": [
+      { "type": "header", "eyebrow": "{brand}", "title": "User Activity", "subtitle": "Last 7 days — {date}" },
+      { "type": "summary_tiles", "tiles": [
+          { "label": "Active Users", "metric": "active_users", "color": "#1e3a5f" },
+          { "label": "Signed In This Week", "metric": "signed_in", "color": "#15803d" },
+          { "label": "Login Events", "metric": "login_events", "color": "#6b7280" },
+          { "label": "All Log Events", "metric": "log_events", "color": "#374151" }
+      ]},
+      { "type": "table", "title": "Who signed in this week", "dataset": "users",
+        "query": { "fields": ["name", "email", "logins", "last_login"],
+                   "date_window": { "field": "last_login", "range": "last_7_days" },
+                   "sort": [{ "key": "last_login", "dir": "desc" }] },
+        "empty_text": "Nobody signed in this week." },
+      { "type": "table", "title": "Activity by day", "dataset": "user_logs", "hide_if_empty": true,
+        "query": { "group_by": [{ "field": "logdate", "bucket": "day" }], "aggregates": [{ "fn": "count" }],
+                   "date_window": { "range": "last_7_days" }, "sort": [{ "key": "logdate__day", "dir": "asc" }] },
+        "labels": { "logdate__day": "Day", "count__all": "Events" } },
+      { "type": "table", "title": "Activity by type", "dataset": "user_logs", "hide_if_empty": true,
+        "query": { "group_by": ["logtype"], "aggregates": [{ "fn": "count" }, { "fn": "count_distinct", "field": "user_id" }],
+                   "date_window": { "range": "last_7_days" }, "sort": [{ "key": "count__all", "dir": "desc" }, { "key": "logtype", "dir": "asc" }], "limit": 20 },
+        "labels": { "count__all": "Events", "count_distinct__user_id": "Users" } },
+      { "type": "text", "style": "footer", "body": "Automated user activity report from {brand}" }
+    ]
+  }
+}
