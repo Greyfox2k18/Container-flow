@@ -61,3 +61,6 @@ usersc/includes/totp_key.php
 usersc/includes/user_agreement.php
 usersc/includes/user_manager_columns.php
 usersc/logs/
+
+# Delivery zips handed to Dan (not source)
+*.zip
