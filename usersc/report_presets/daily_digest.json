@@ -1,0 +1,58 @@
+{
+  "name": "Daily Digest",
+  "description": "Open containers by stage, sent to supervisors every morning. Block version of cron/daily_digest.php.",
+  "schedule": { "frequency": "daily", "hour": 6 },
+  "scope_mode": "none",
+  "attach_csv": false,
+  "recipients": [
+    { "kind": "permission", "permission_id": 3, "note": "Supervisors" }
+  ],
+  "layout": {
+    "metrics": {
+      "awaiting":    { "dataset": "containers", "fn": "count", "filters": [{ "field": "status", "op": "eq", "value": "completed" }] },
+      "in_progress": { "dataset": "containers", "fn": "count", "filters": [{ "field": "status", "op": "eq", "value": "in_progress" }] },
+      "pending":     { "dataset": "containers", "fn": "count", "filters": [{ "field": "status", "op": "eq", "value": "pending" }] },
+      "total_open":  { "dataset": "containers", "fn": "count", "filters": [{ "field": "status", "op": "in", "value": ["pending", "in_progress", "completed"] }] }
+    },
+    "subject": [
+      { "if": { "metric": "awaiting", "op": "gt", "value": 0 },   "text": "Container Tracking: {awaiting} Container{s:awaiting} Awaiting Review — {date_short}" },
+      { "if": { "metric": "total_open", "op": "gt", "value": 0 }, "text": "Container Tracking Daily Digest — {total_open} Open Container{s:total_open} — {date_short}" },
+      { "text": "Container Tracking Daily Digest — All Clear — {date_short}" }
+    ],
+    "blocks": [
+      { "type": "header", "eyebrow": "{brand}", "title": "Container Tracking", "subtitle": "Daily Digest — {date}" },
+      { "type": "summary_tiles", "tiles": [
+          { "label": "Awaiting Review", "metric": "awaiting",    "color": "#dc2626" },
+          { "label": "In Progress",     "metric": "in_progress", "color": "#1e3a5f" },
+          { "label": "Pending",         "metric": "pending",     "color": "#6b7280" },
+          { "label": "Total Open",      "metric": "total_open",  "color": "#374151" }
+      ]},
+      { "type": "text", "style": "alert", "show_if": { "metric": "awaiting", "op": "eq", "value": 1 },
+        "body": "1 container is ready for review and waiting to have photos sent to the client." },
+      { "type": "text", "style": "alert", "show_if": { "metric": "awaiting", "op": "gt", "value": 1 },
+        "body": "{awaiting} containers are ready for review and waiting to have photos sent to clients." },
+      { "type": "table", "title": "Awaiting Review", "dataset": "containers", "hide_if_empty": true, "csv": false,
+        "query": { "fields": ["container_number", "customer", "type", "updated_at"],
+                   "filters": [{ "field": "status", "op": "eq", "value": "completed" }],
+                   "sort": [{ "key": "updated_at", "dir": "asc" }] },
+        "labels": { "container_number": "Container", "customer": "Client", "type": "Type", "updated_at": "Completed" } },
+      { "type": "table", "title": "In Progress", "dataset": "containers", "hide_if_empty": true, "csv": false,
+        "query": { "fields": ["container_number", "customer", "type", "updated_at"],
+                   "filters": [{ "field": "status", "op": "eq", "value": "in_progress" }],
+                   "sort": [{ "key": "updated_at", "dir": "asc" }] },
+        "labels": { "container_number": "Container", "customer": "Client", "type": "Type", "updated_at": "Last Updated" } },
+      { "type": "table", "title": "Pending", "dataset": "containers", "hide_if_empty": true, "csv": false,
+        "query": { "fields": ["container_number", "customer", "type", "created_at"],
+                   "filters": [{ "field": "status", "op": "eq", "value": "pending" }],
+                   "sort": [{ "key": "updated_at", "dir": "asc" }] },
+        "labels": { "container_number": "Container", "customer": "Client", "type": "Type", "created_at": "Created" } },
+      { "type": "text", "style": "success", "show_if": { "metric": "total_open", "op": "eq", "value": 0 },
+        "body": "No open containers — all caught up." },
+      { "type": "buttons", "buttons": [
+          { "label": "Open Dashboard", "url": "usersc/container_dashboard.php", "style": "primary" },
+          { "label": "Advanced View",  "url": "usersc/container_dashboard_pro.php", "style": "secondary" }
+      ]},
+      { "type": "text", "style": "footer", "body": "Automated daily digest from {brand}" }
+    ]
+  }
+}

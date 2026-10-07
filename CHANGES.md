@@ -171,9 +171,9 @@
 - Checked in both `container_create.php` and `ajax/container_update.php`
 
 ## Report Builder plugin (usersc/plugins/report_builder/, usersc/report_datasets/)
-Replaces the fixed-format reports with saved reports built from blocks. Being built in stages; stage 1 is in.
-- **Stage 1 — datasets + safe query builder** (no DB changes, nothing user-facing yet; existing reports untouched)
-  - UserSpice plugin layout (info.xml, install/activate/uninstall/delete/migrate, configure.php) — targets UserSpice 6.1.2; not yet installed on the live site
+Replaces the fixed-format reports with saved reports built from blocks. Being built in stages; stages 1–2 are in.
+- **Stage 1 — datasets + safe query builder** (no DB changes; existing reports untouched). Verified on live: "Check datasets" OK
+  - UserSpice plugin layout (info.xml, install/activate/uninstall/delete/migrate, configure.php) — UserSpice 6.1.2; stage 1 installed on live Oct 7, 2026
   - `.gitignore` now ignores `usersc/plugins/*` EXCEPT `report_builder/` so the plugin is tracked
   - Datasets register from `usersc/report_datasets/*.php` (outside the plugin folder so plugin updates never overwrite them) via `rb_register_dataset()`; loaded lazily, one bad file is reported on the configure page instead of breaking the rest
   - `usersc/report_datasets/containers.php` — containers + customers/warehouses/users joins; scope = `getUserWarehouseIds()` rule (tagged users see own warehouses + unassigned, untagged unrestricted — same as `filterContainersByWarehouseAccess()`)
@@ -182,7 +182,18 @@ Replaces the fixed-format reports with saved reports built from blocks. Being bu
   - `delete.php` deliberately does NOT drop `report_*` tables (live data predates the plugin)
   - Tests: `php usersc/plugins/report_builder/tests/run_tests.php` (CLI only, in-memory SQLite, folder denied by .htaccess)
   - Configure page "Check datasets against the database" runs each dataset with all fields (5 rows) to prove the config matches the live schema
-- **Finding:** the spec assumed `report_customers`, recipient `note`, `report_kind`, `layout_json` and client-digest functions already existed — they do not (live `SHOW TABLES LIKE 'report%'` shows only definitions/recipients/run_log; live reports_*.php match the repo). They will be built as part of the plugin. `containers.completed_at/reviewed_at` still unconfirmed — waiting on full `SHOW CREATE TABLE`
+- **Stage 2 — blocks, storage, delivery, daily digest preset**
+  - Plugin owns its tables (migrate.php `00001`): `plg_rb_reports` (layout_json, schedule, scope_mode, attach_csv, last_sent_at), `plg_rb_recipients` (kind email/user/permission + note), `plg_rb_run_log`. The old `report_definitions`/`report_recipients`/`report_run_log` tables were never used (no reports) and are left alone
+  - `RbRender` — one layout → email-safe HTML (also the web preview) + a CSV per table. Blocks: header, summary_tiles, table, grouped_table, text (normal/alert/info/success/muted/footer), buttons. Named metrics feed tiles, `show_if` conditions, `{tokens}` and subject rules. Report-level filters (e.g. client multi-select) apply to every block on that dataset. All layout text escaped; colours hex-only; button URLs http(s) or site-relative; CSV cells starting = + - @ are prefixed with '
+  - `RbReports` — recipients (plain emails OK, `user:ID`, `perm:ID` resolved at send time; de-duped; notes), schedule (`isDue()` = same hour-based rules as `isScheduledReportDue()`), send now / test-to-me / scheduled, run log
+  - Scope modes: `creator` (default), `recipient` (each user recipient gets their own warehouses — fixes the "digest shows all warehouses" outstanding item when chosen), `none`
+  - Mailer/base URL/brand come from `usersc/report_builder_config.php` (Container Flow: `sendSparkPostEmail()`, `site_url` setting). Other projects supply their own; without one it falls back to UserSpice `email()`
+  - Cron: `usersc/plugins/report_builder/cron/run.php` (CLI only), hourly
+  - `usersc/report_presets/daily_digest.json` — the daily digest as blocks. Test runs the ORIGINAL `cron/daily_digest.php` unmodified side by side and requires identical subject, visible text, links and recipients across 4 scenarios
+  - Configure page: create from preset, preview (sandboxed iframe), test to me, send now, activate/pause, edit schedule/recipients/scope/layout JSON (layout is test-rendered before save), run log. Text fields read from raw `$_POST` (Input::get escaping would double-encode)
+  - `containers` dataset: added `assigned_to_name`, `drive_backed_up_at`; container # shows monospace; loads `container_functions.php` itself so the warehouse scope can't silently fail open
+- **Switching the daily digest over** (when happy with the preview/test): activate the "Daily Digest" report, add the plugin cron line, remove the `cron/daily_digest.php` cron line. `ajax/trigger_digest.php` (settings page button) still uses the old code until then
+- **Finding:** the spec assumed `report_customers`, recipient `note`, `report_kind`, `layout_json` and client-digest functions already existed — they did not, and no reports had been made in the old builder, so nothing needed migrating. Live schema has no `completed_at`/`reviewed_at`; "completed" dates use `updated_at` like the digest
 
 ## Still outstanding
 - `container_edit.php` was never uploaded this session — warehouse picker, identifier validation, and missing-photos alert are NOT wired into it if it's a separate page from the Pro dashboard modal

@@ -34,6 +34,7 @@
  *   sortable     default true
  *   groupable    default true for text/enum/bool/date/datetime
  *   aggregatable default true for number (sum/avg); count/min/max work on any field
+ *   display      optional rendering hint: 'mono' (fixed-width, e.g. container numbers)
  *
  * Scope callback: receives the run context (['user_id' => int, ...]) and
  * returns null for "no restriction", false for "no rows at all", or
@@ -52,6 +53,7 @@ class RbRegistry {
     const TABLE_RE      = '/^[A-Za-z_][A-Za-z0-9_]{0,63}$/';
     const FIELD_TYPES   = ['text', 'number', 'date', 'datetime', 'enum', 'bool'];
     const GROUPABLE_BY_DEFAULT = ['text', 'enum', 'bool', 'date', 'datetime'];
+    const DISPLAYS      = ['mono'];
 
     private static $datasets = [];
     private static $dirs     = [];
@@ -176,6 +178,10 @@ class RbRegistry {
             if ($options !== null && !is_array($options) && !is_callable($options)) {
                 throw new RbConfigException("$where: field '$fkey' options must be an array or callable.");
             }
+            $display = $f['display'] ?? null;
+            if ($display !== null && !in_array($display, self::DISPLAYS, true)) {
+                throw new RbConfigException("$where: field '$fkey' has unknown display '$display'.");
+            }
             $fields[$fkey] = [
                 'key'          => $fkey,
                 'label'        => $f['label'] ?? ucwords(str_replace('_', ' ', $fkey)),
@@ -187,6 +193,7 @@ class RbRegistry {
                 'sortable'     => (bool) ($f['sortable'] ?? true),
                 'groupable'    => (bool) ($f['groupable'] ?? in_array($type, self::GROUPABLE_BY_DEFAULT, true)),
                 'aggregatable' => (bool) ($f['aggregatable'] ?? ($type === 'number')),
+                'display'      => $display,
             ];
         }
 

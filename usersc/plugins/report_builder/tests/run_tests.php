@@ -289,5 +289,7 @@ test('MySQL SQL text for buckets and computed fields', function () {
     check(strpos($q['sql'], 'WEEKDAY(c.created_at)') !== false);
 });
 
+require __DIR__ . '/test_stage2.php';
+
 echo "\n$passed passed, $failed failed\n";
 exit($failed ? 1 : 0);
