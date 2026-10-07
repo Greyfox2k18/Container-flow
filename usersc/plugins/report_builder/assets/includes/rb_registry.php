@@ -36,6 +36,11 @@
  *   aggregatable default true for number (sum/avg); count/min/max work on any field
  *   display      optional rendering hint: 'mono' (fixed-width, e.g. container numbers)
  *
+ * Access callback (optional): 'access' => function (int $user_id) { return bool; }
+ * decides who may see/use the dataset in the editor at all (e.g. admins only
+ * for user data). Scheduled sends of a saved report don't re-check it — the
+ * person who saved the report had to pass it.
+ *
  * Scope callback: receives the run context (['user_id' => int, ...]) and
  * returns null for "no restriction", false for "no rows at all", or
  * ['where' => 'sql with ? placeholders', 'params' => [...], 'joins' => [...]].
@@ -56,21 +61,40 @@ class RbRegistry {
     const DISPLAYS      = ['mono'];
 
     private static $datasets = [];
-    private static $dirs     = [];
+    private static $dirs     = [];   // dir => true if built-in (loaded last, never overrides a project dataset)
     private static $loaded   = false;
+    private static $loadingBuiltin = false;
     private static $errors   = [];   // file => message, for dataset files that failed to load
 
-    /** Add a folder of dataset config files. Safe to call more than once. */
-    public static function addDir($dir) {
+    /**
+     * Add a folder of dataset config files. Safe to call more than once.
+     * $builtin folders (shipped with the plugin) load after project folders,
+     * and a project dataset with the same key wins.
+     */
+    public static function addDir($dir, $builtin = false) {
         $dir = rtrim($dir, '/\\');
-        if (!in_array($dir, self::$dirs, true)) {
-            self::$dirs[]  = $dir;
-            self::$loaded  = false;
+        if (!isset(self::$dirs[$dir])) {
+            self::$dirs[$dir] = (bool) $builtin;
+            self::$loaded = false;
         }
     }
 
     public static function register($key, array $def) {
+        if (self::$loadingBuiltin && isset(self::$datasets[$key])) return; // project override already registered
         self::$datasets[$key] = self::normalize($key, $def);
+    }
+
+    /** May this user see/use the dataset in the editor? */
+    public static function canAccess($key, $user_id) {
+        $ds = self::get($key);
+        if (!$ds) return false;
+        if ($ds['access'] === null) return true;
+        try {
+            return (bool) call_user_func($ds['access'], (int) $user_id);
+        } catch (\Throwable $e) {
+            error_log("Report builder: access check for dataset $key failed: " . $e->getMessage());
+            return false;
+        }
     }
 
     public static function all() {
@@ -100,7 +124,11 @@ class RbRegistry {
     private static function load() {
         if (self::$loaded) return;
         self::$loaded = true;
-        foreach (self::$dirs as $dir) {
+        $order = array_merge(array_keys(array_filter(self::$dirs, function ($b) { return !$b; })),
+                             array_keys(array_filter(self::$dirs)));
+        foreach ($order as $dir) {
+            if (self::$dirs[$dir] && class_exists('RbReports') && !RbReports::config()['builtin_datasets']) continue;
+            self::$loadingBuiltin = self::$dirs[$dir];
             $files = glob($dir . '/*.php') ?: [];
             sort($files);
             foreach ($files as $file) {
@@ -113,11 +141,14 @@ class RbRegistry {
                 }
             }
         }
+        self::$loadingBuiltin = false;
     }
 
     // Separate method so a dataset file can't clobber load()'s variables.
+    // Plain include (not _once) so reset() + reload works: dataset files must
+    // only call rb_register_dataset() — wrap any helper function in function_exists().
     private static function includeFile($file) {
-        include_once $file;
+        include $file;
     }
 
     private static function normalize($key, array $def) {
@@ -208,6 +239,9 @@ class RbRegistry {
         if (isset($def['scope']) && !is_callable($def['scope'])) {
             throw new RbConfigException("$where: scope must be callable.");
         }
+        if (isset($def['access']) && !is_callable($def['access'])) {
+            throw new RbConfigException("$where: access must be callable.");
+        }
 
         return [
             'key'                => $key,
@@ -220,6 +254,7 @@ class RbRegistry {
             'default_date_field' => $date_field,
             'default_fields'     => array_values($default_fields),
             'scope'              => $def['scope'] ?? null,
+            'access'             => $def['access'] ?? null,
         ];
     }
 

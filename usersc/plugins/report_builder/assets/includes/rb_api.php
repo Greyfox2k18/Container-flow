@@ -23,17 +23,17 @@ class RbApi {
             if (!$user_id || !RbReports::canBuild($user_id)) return self::err("You don't have permission to build reports.");
             switch ($action) {
                 case 'meta':          return self::ok(self::meta($user_id));
-                case 'list':          return self::ok(['reports' => self::listReports()]);
-                case 'load':          return self::load($p);
+                case 'list':          return self::ok(['reports' => self::listReports($user_id)]);
+                case 'load':          return self::load($p, $user_id);
                 case 'preview':       return self::preview($p, $user_id);
                 case 'save':          return self::save($p, $user_id);
                 case 'toggle':        return self::toggle($p, $user_id);
-                case 'delete':        return self::deleteReport($p);
+                case 'delete':        return self::deleteReport($p, $user_id);
                 case 'duplicate':     return self::duplicate($p, $user_id);
                 case 'create_preset': return self::createPreset($p, $user_id);
                 case 'send_test':     return self::send($p, $user_id, true);
                 case 'send_now':      return self::send($p, $user_id, false);
-                case 'run_log':       return self::ok(['log' => RbReports::runLog((int) ($p['id'] ?? 0), 20)]);
+                case 'run_log':       return self::accessibleReport($p, $user_id) ? self::ok(['log' => RbReports::runLog((int) $p['id'], 20)]) : self::err('Report not found.');
             }
             return self::err('Unknown action.');
         } catch (RbQueryException $e) {
@@ -49,6 +49,7 @@ class RbApi {
     private static function meta($user_id) {
         $datasets = [];
         foreach (RbRegistry::all() as $key => $ds) {
+            if (!RbRegistry::canAccess($key, $user_id)) continue;
             $fields = [];
             foreach ($ds['fields'] as $f) {
                 $opts = $f['type'] === 'enum' ? RbRegistry::fieldOptions($f) : null;
@@ -88,9 +89,10 @@ class RbApi {
         ];
     }
 
-    private static function listReports() {
+    private static function listReports($user_id) {
         $out = [];
         foreach (RbReports::all() as $r) {
+            if (!self::accessibleReport(['id' => $r->id], $user_id)) continue;
             $out[] = [
                 'id' => (int) $r->id, 'name' => $r->name, 'description' => $r->description,
                 'active' => (bool) $r->active, 'schedule' => RbReports::scheduleText($r),
@@ -100,8 +102,8 @@ class RbApi {
         return $out;
     }
 
-    private static function load(array $p) {
-        $r = RbReports::get((int) ($p['id'] ?? 0));
+    private static function load(array $p, $user_id) {
+        $r = self::accessibleReport($p, $user_id);
         if (!$r) return self::err('Report not found.');
         return self::ok([
             'report' => self::reportFields($r),
@@ -114,7 +116,8 @@ class RbApi {
     }
 
     private static function preview(array $p, $user_id) {
-        $existing = !empty($p['id']) ? RbReports::get((int) $p['id']) : null;
+        $existing = !empty($p['id']) ? self::accessibleReport($p, $user_id) : null;
+        if (!empty($p['id']) && !$existing) return self::err('Report not found.');
         $report = self::draftReport($p, $existing, $user_id);
         $out = RbReports::render($report, self::viewerCtx($report, $user_id));
         return self::ok([
@@ -125,7 +128,7 @@ class RbApi {
 
     private static function save(array $p, $user_id) {
         $id = (int) ($p['id'] ?? 0);
-        $existing = $id ? RbReports::get($id) : null;
+        $existing = $id ? self::accessibleReport($p, $user_id) : null;
         if ($id && !$existing) return self::err('Report not found.');
         $f = (array) ($p['report'] ?? []);
         $name = mb_substr(trim((string) ($f['name'] ?? '')), 0, 150);
@@ -164,7 +167,7 @@ class RbApi {
     }
 
     private static function toggle(array $p, $user_id) {
-        $r = RbReports::get((int) ($p['id'] ?? 0));
+        $r = self::accessibleReport($p, $user_id);
         if (!$r) return self::err('Report not found.');
         if (!$r->active && $r->scope_mode === 'none' && !RbReports::canUnscope($user_id)) {
             return self::err("This report ignores data restrictions; only someone with full access can activate it.");
@@ -173,15 +176,15 @@ class RbApi {
         return self::ok(['active' => !$r->active]);
     }
 
-    private static function deleteReport(array $p) {
-        $r = RbReports::get((int) ($p['id'] ?? 0));
+    private static function deleteReport(array $p, $user_id) {
+        $r = self::accessibleReport($p, $user_id);
         if (!$r) return self::err('Report not found.');
         RbReports::delete($r->id);
         return self::ok([]);
     }
 
     private static function duplicate(array $p, $user_id) {
-        $r = RbReports::get((int) ($p['id'] ?? 0));
+        $r = self::accessibleReport($p, $user_id);
         if (!$r) return self::err('Report not found.');
         $scope = $r->scope_mode === 'none' && !RbReports::canUnscope($user_id) ? 'creator' : $r->scope_mode;
         $id = RbReports::save([
@@ -206,7 +209,7 @@ class RbApi {
     }
 
     private static function send(array $p, $user_id, $test) {
-        $r = RbReports::get((int) ($p['id'] ?? 0));
+        $r = self::accessibleReport($p, $user_id);
         if (!$r) return self::err('Report not found.');
         if (!$test && !RbReports::canSend($user_id)) return self::err("You don't have permission to send reports to their recipients.");
         $opts = [];
@@ -225,6 +228,11 @@ class RbApi {
     private static function draftReport(array $p, $existing, $user_id) {
         $layout = $p['layout'] ?? null;
         if (!is_array($layout)) throw new RbQueryException('The layout is missing.');
+        foreach (self::datasetsUsed($layout) as $key) {
+            if (RbRegistry::get($key) && !RbRegistry::canAccess($key, $user_id)) {
+                throw new RbQueryException("You don't have access to the '" . RbRegistry::get($key)['label'] . "' data.");
+            }
+        }
         $f = (array) ($p['report'] ?? []);
         return (object) [
             'id'           => $existing ? (int) $existing->id : 0,
@@ -246,6 +254,25 @@ class RbApi {
     private static function viewerCtx($report, $user_id) {
         if (!RbReports::canUnscope($user_id)) return ['user_id' => $user_id];
         return RbReports::scopeCtx($report, $user_id);
+    }
+
+    /** Saved report by id, or null if missing or it uses data this user can't access. */
+    private static function accessibleReport(array $p, $user_id) {
+        $r = RbReports::get((int) ($p['id'] ?? 0));
+        if (!$r) return null;
+        foreach (self::datasetsUsed(json_decode((string) $r->layout_json, true) ?: []) as $key) {
+            if (RbRegistry::get($key) && !RbRegistry::canAccess($key, $user_id)) return null;
+        }
+        return $r;
+    }
+
+    /** Every dataset key a layout refers to (blocks, metrics, report filters). */
+    private static function datasetsUsed(array $layout) {
+        $keys = [];
+        foreach ((array) ($layout['blocks'] ?? []) as $b)         if (is_array($b) && isset($b['dataset'])) $keys[] = $b['dataset'];
+        foreach ((array) ($layout['metrics'] ?? []) as $m)        if (is_array($m) && isset($m['dataset'])) $keys[] = $m['dataset'];
+        foreach ((array) ($layout['report_filters'] ?? []) as $f) if (is_array($f) && isset($f['dataset'])) $keys[] = $f['dataset'];
+        return array_values(array_unique(array_filter($keys, 'is_string')));
     }
 
     private static function reportFields($r) {

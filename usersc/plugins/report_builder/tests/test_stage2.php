@@ -266,7 +266,7 @@ test('scope_mode=recipient sends each user their own warehouses', function () {
     $layout = json_encode(['metrics' => ['n' => ['dataset' => 'containers']], 'subject' => [['text' => '{n} containers']], 'blocks' => [['type' => 'text', 'body' => '{n}']]]);
     $id = RbReports::save(['name' => 'Scoped', 'layout_json' => $layout, 'scope_mode' => 'recipient', 'created_by' => 1]);
     RbReports::saveRecipients($id, [['kind' => 'user', 'user_id' => 7], ['kind' => 'user', 'user_id' => 1], ['kind' => 'email', 'email' => 'x@y.example']]);
-    DB::$pdo->exec("INSERT INTO users VALUES (7,'north@example.com','Nora','North',1)");
+    DB::$pdo->exec("INSERT INTO users (id,email,fname,lname,active) VALUES (7,'north@example.com','Nora','North',1)");
     $res = RbReports::run(RbReports::get($id), 'manual');
     check($res['success'], $res['message']);
     $by = [];

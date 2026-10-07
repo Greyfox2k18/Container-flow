@@ -52,6 +52,13 @@ class DB {
 }
 }
 
+if (!function_exists('hasPerm')) {
+    function hasPerm($perms, $user_id = null) {
+        $ph = implode(',', array_fill(0, count((array) $perms), '?'));
+        return DB::getInstance()->query("SELECT 1 FROM user_permission_matches WHERE user_id = ? AND permission_id IN ($ph)", array_merge([(int) $user_id], (array) $perms))->count() > 0;
+    }
+}
+
 if (!function_exists('fetchPermissionUsers')) {
     function fetchPermissionUsers($perm) {
         return DB::getInstance()->query('SELECT user_id FROM user_permission_matches WHERE permission_id = ?', [$perm])->results();
@@ -64,7 +71,9 @@ function rb_fixture_db($dsn) {
     $pdo->exec("
     CREATE TABLE customers (id INTEGER PRIMARY KEY, name TEXT);
     CREATE TABLE warehouses (id INTEGER PRIMARY KEY, name TEXT, sort_order INT DEFAULT 0);
-    CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT, fname TEXT, lname TEXT, active INT DEFAULT 1);
+    CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT, fname TEXT, lname TEXT, active INT DEFAULT 1,
+      username TEXT, logins INT DEFAULT 0, last_login TEXT, join_date TEXT);
+    CREATE TABLE logs (id INTEGER PRIMARY KEY, user_id INT, logdate TEXT, logtype TEXT, lognote TEXT, ip TEXT, metadata TEXT);
     CREATE TABLE user_permission_matches (user_id INT, permission_id INT);
     CREATE TABLE permissions (id INTEGER PRIMARY KEY, name TEXT);
     INSERT INTO permissions VALUES (1,'User'),(2,'Administrator'),(3,'Supervisor');
@@ -83,7 +92,7 @@ function rb_fixture_db($dsn) {
       recipient_count INT, row_count INT, success INT, error_message TEXT);
     INSERT INTO customers VALUES (1,'Acme Imports'),(2,'Beta & Sons <Foods>');
     INSERT INTO warehouses VALUES (1,'North',0),(2,'South',1);
-    INSERT INTO users VALUES (1,'dan@example.com','Dan','R',1),(2,'sue@example.com','Sue','North',1),(3,'old@example.com','Old','Sup',0);
+    INSERT INTO users (id,email,fname,lname,active) VALUES (1,'dan@example.com','Dan','R',1),(2,'sue@example.com','Sue','North',1),(3,'old@example.com','Old','Sup',0);
     INSERT INTO user_permission_matches VALUES (1,3),(2,3),(3,3);
     ");
     return $pdo;

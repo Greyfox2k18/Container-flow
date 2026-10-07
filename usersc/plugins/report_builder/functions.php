@@ -12,3 +12,6 @@ require_once __DIR__ . '/assets/includes/rb_api.php';
 
 // usersc/report_datasets/ — project-owned, so plugin updates never overwrite it.
 RbRegistry::addDir(dirname(__DIR__, 2) . '/report_datasets');
+// Built-in UserSpice datasets (users, user_logs). Project datasets with the
+// same key win; 'builtin_datasets' => false in the project config turns them off.
+RbRegistry::addDir(__DIR__ . '/assets/datasets', true);

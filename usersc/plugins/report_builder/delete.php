@@ -6,8 +6,8 @@ require_once("init.php");
 if (in_array($user->data()->id, $master_account)){
 include "plugin_info.php";
 
-// Deliberately does NOT drop the report_* tables: they hold live report
-// definitions, recipients and run history that predate this plugin.
-// Drop them by hand if you really want them gone.
+// Deliberately does NOT drop plg_rb_reports / plg_rb_recipients /
+// plg_rb_run_log: deleting the plugin by mistake shouldn't wipe every saved
+// report. To remove them for good, drop those three tables by hand.
 
 } //do not perform actions outside of this statement

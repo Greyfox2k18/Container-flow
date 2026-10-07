@@ -171,7 +171,7 @@
 - Checked in both `container_create.php` and `ajax/container_update.php`
 
 ## Report Builder plugin (usersc/plugins/report_builder/, usersc/report_datasets/)
-Replaces the fixed-format reports with saved reports built from blocks. Being built in stages; stages 1–3 are in.
+Replaces the fixed-format reports with saved reports built from blocks. Being built in stages; stages 1–4 are in.
 - **Stage 1 — datasets + safe query builder** (no DB changes; existing reports untouched). Verified on live: "Check datasets" OK
   - UserSpice plugin layout (info.xml, install/activate/uninstall/delete/migrate, configure.php) — UserSpice 6.1.2; stage 1 installed on live Oct 7, 2026
   - `.gitignore` now ignores `usersc/plugins/*` EXCEPT `report_builder/` so the plugin is tracked
@@ -198,6 +198,13 @@ Replaces the fixed-format reports with saved reports built from blocks. Being bu
   - Editor (`assets/js/rb_editor.js`, `assets/css/rb_editor.css`, no build step): report list (create from preset, copy, test-to-me, send now, activate, delete); block palette; drag to reorder (SortableJS 1.15.2, bundled locally in `assets/js/`, MIT) plus ▲▼ buttons; per-block settings (columns + headings, filters by field type, date range, sort, totals/group-by with day/week/month/year, show-only-if); Metrics & filters tab (metrics, report-level filters e.g. client multi-select); Delivery tab (schedule, recipients by email/user/permission group with notes, data access, CSV, recent runs); Advanced tab (subject rules, layout JSON import/export). Live preview re-renders on the server ~0.7s after each change, shown in a sandboxed iframe
   - Permissions (`usersc/report_builder_config.php`): `can_build` / `can_send` = supervisors; `can_unscope` = supervisors with no warehouse tags. Master accounts can always do everything. A warehouse-restricted builder can't save or activate an "everything" report, and their previews are always limited to their own warehouses
   - Tests: `tests/test_stage3.php` (API: permissions, round trip, validation, scope rules); `tests/e2e/run_e2e.sh` — headless Chromium + Playwright against `php -S` with a fake UserSpice (dev machines only; tests/ is denied by .htaccess)
+- **Stage 4 — reuse proof + packaging**
+  - Built-in datasets shipped in the plugin (`assets/datasets/`), work on any UserSpice site: `users` (name, username, email, active, login count, last login, joined) and `user_logs` (UserSpice `logs` table + user name). Admins only — master accounts or permission 2 — via the new per-dataset `access` callback
+  - Registry: built-in folders load after project folders; a project dataset with the same key replaces a built-in one; `'builtin_datasets' => false` in the config hides them. Dataset files now load with `include` (not `_once`) so they must not declare unguarded functions
+  - Access enforced everywhere in the editor API: hidden from the dataset list, and preview/save refuse layouts using them (blocks, metrics or report filters). Reports that use them are hidden from other builders' list and can't be opened, copied, sent, paused or deleted by them
+  - Preset `assets/presets/user_activity.json` — weekly (Mon 7 AM) to Administrators (perm 2): active users, signed in this week, login events, who signed in, activity by day and by type, CSVs attached. Project presets list first; same name overrides
+  - Config `base_url` callable is now resolved only when a report renders (it was resolved whenever the config loaded — would have been a DB query per page once functions.php started reading config)
+  - `README.md` — how to use the plugin on another project (config, datasets, page + AJAX wrappers, cron, presets); new logo; info.xml 0.4.0
 - **Switching the daily digest over** (when happy with the preview/test): activate the "Daily Digest" report, add the plugin cron line, remove the `cron/daily_digest.php` cron line. `ajax/trigger_digest.php` (settings page button) still uses the old code until then
 - **Finding:** the spec assumed `report_customers`, recipient `note`, `report_kind`, `layout_json` and client-digest functions already existed — they did not, and no reports had been made in the old builder, so nothing needed migrating. Live schema has no `completed_at`/`reviewed_at`; "completed" dates use `updated_at` like the digest
 

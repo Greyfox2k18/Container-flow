@@ -23,7 +23,7 @@ RbReports::$configFile = $cfg3;
 RbReports::resetConfig();
 
 rb_fixture_db('sqlite::memory:');
-DB::$pdo->exec("INSERT INTO users VALUES (7,'nora@example.com','Nora','North',1)");
+DB::$pdo->exec("INSERT INTO users (id,email,fname,lname,active) VALUES (7,'nora@example.com','Nora','North',1)");
 rb_seed([
     [1, 'N1', 'inbound',  'pending',   1, 1, null, 1, '2026-10-06 08:00:00', '2026-10-06 08:00:00'],
     [2, 'S1', 'inbound',  'pending',   2, 2, null, 1, '2026-10-06 08:00:00', '2026-10-06 08:00:00'],

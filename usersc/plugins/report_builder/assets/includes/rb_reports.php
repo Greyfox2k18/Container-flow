@@ -12,6 +12,7 @@
  *     'brand'         => 'Container Flow',
  *     'primary_color' => '#1e3a5f',
  *     'editor_url'    => 'usersc/reports_builder.php',              // page that hosts the editor (site-relative)
+ *     'builtin_datasets' => true,                                  // the plugin's UserSpice users/logs datasets (admins only)
  *     'can_build'     => function ($user_id) { return bool; },  // open the editor, save, test-send
  *     'can_send'      => function ($user_id) { return bool; },  // "send now" to real recipients
  *     'can_unscope'   => function ($user_id) { return bool; },  // make/preview reports that ignore dataset scope
@@ -55,11 +56,10 @@ class RbReports {
             $loaded = (function ($file) { return include $file; })($file);
             if (is_array($loaded)) $cfg = $loaded;
         }
-        $base = $cfg['base_url'] ?? '';
-        if (is_callable($base)) $base = call_user_func($base);
         return self::$config = [
             'mailer'        => $cfg['mailer'] ?? null,
-            'base_url'      => (string) $base,
+            'base_url'      => $cfg['base_url'] ?? '',     // string or callable — resolved by baseUrl() only when rendering
+            'builtin_datasets' => (bool) ($cfg['builtin_datasets'] ?? true),
             'brand'         => (string) ($cfg['brand'] ?? ''),
             'primary_color' => (string) ($cfg['primary_color'] ?? '#1e3a5f'),
             'editor_url'    => (string) ($cfg['editor_url'] ?? ''),
@@ -99,7 +99,25 @@ class RbReports {
         return 'Daily at ' . $t;
     }
 
-    public static function resetConfig() { self::$config = null; }
+    public static function resetConfig() { self::$config = null; self::$baseUrl = null; }
+
+    private static $baseUrl = null;
+    public static function baseUrl() {
+        if (self::$baseUrl === null) {
+            $b = self::config()['base_url'];
+            self::$baseUrl = (string) (is_callable($b) ? call_user_func($b) : $b);
+        }
+        return self::$baseUrl;
+    }
+
+    /** UserSpice admin: a master account or permission level 2 (Administrator). */
+    public static function isUserSpiceAdmin($user_id) {
+        global $master_account;
+        $user_id = (int) $user_id;
+        if (!$user_id) return false;
+        if (is_array($master_account ?? null) && in_array($user_id, array_map('intval', $master_account), true)) return true;
+        return function_exists('hasPerm') && hasPerm([2], $user_id);
+    }
 
     // ── CRUD ────────────────────────────────────────────────────────────────
 
@@ -254,7 +272,7 @@ class RbReports {
             'ctx'           => $ctx,
             'report_name'   => $report->name,
             'brand'         => $cfg['brand'],
-            'base_url'      => $cfg['base_url'],
+            'base_url'      => self::baseUrl(),
             'primary_color' => $cfg['primary_color'],
         ]);
     }
@@ -356,14 +374,22 @@ class RbReports {
 
     // ── presets ─────────────────────────────────────────────────────────────
 
-    /** usersc/report_presets/*.json — [basename => decoded preset]. */
+    /**
+     * Presets: the project's (usersc/report_presets/) first, then the plugin's
+     * own (assets/presets/); a project preset with the same name replaces the
+     * plugin's. [basename => decoded preset].
+     */
     public static function presets() {
-        $out = [];
-        foreach (glob(dirname(__DIR__, 4) . '/report_presets/*.json') ?: [] as $f) {
-            $p = json_decode((string) file_get_contents($f), true);
-            if (is_array($p) && !empty($p['name']) && isset($p['layout'])) $out[basename($f, '.json')] = $p;
-        }
-        return $out;
+        $read = function ($dir) {
+            $out = [];
+            foreach (glob($dir . '/*.json') ?: [] as $f) {
+                $p = json_decode((string) file_get_contents($f), true);
+                if (is_array($p) && !empty($p['name']) && isset($p['layout'])) $out[basename($f, '.json')] = $p;
+            }
+            return $out;
+        };
+        $project = $read(dirname(__DIR__, 4) . '/report_presets');
+        return $project + $read(dirname(__DIR__) . '/presets');
     }
 
     /** Create an INACTIVE report from a preset array. Returns the new id. */

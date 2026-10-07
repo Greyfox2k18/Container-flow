@@ -291,6 +291,7 @@ test('MySQL SQL text for buckets and computed fields', function () {
 
 require __DIR__ . '/test_stage2.php';
 require __DIR__ . '/test_stage3.php';
+require __DIR__ . '/test_stage4.php';
 
 echo "\n$passed passed, $failed failed\n";
 exit($failed ? 1 : 0);
