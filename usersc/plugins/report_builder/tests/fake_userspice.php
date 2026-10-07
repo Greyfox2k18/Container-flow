@@ -3,7 +3,7 @@
  * Minimal stand-ins for the UserSpice pieces the plugin touches (DB class,
  * fetchPermissionUsers), backed by SQLite — tests only.
  */
-if (PHP_SAPI !== 'cli') die();
+if (!in_array(PHP_SAPI, ['cli', 'cli-server'], true)) die(); // tests and the local e2e harness only
 
 if (!class_exists('DB')) {
 class DB {
@@ -66,6 +66,8 @@ function rb_fixture_db($dsn) {
     CREATE TABLE warehouses (id INTEGER PRIMARY KEY, name TEXT, sort_order INT DEFAULT 0);
     CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT, fname TEXT, lname TEXT, active INT DEFAULT 1);
     CREATE TABLE user_permission_matches (user_id INT, permission_id INT);
+    CREATE TABLE permissions (id INTEGER PRIMARY KEY, name TEXT);
+    INSERT INTO permissions VALUES (1,'User'),(2,'Administrator'),(3,'Supervisor');
     CREATE TABLE containers (
       id INTEGER PRIMARY KEY, container_number TEXT, type TEXT, status TEXT, customer_id INT, warehouse_id INT,
       carrier TEXT, shipment_number TEXT, seal_number TEXT, po_bol_number TEXT, piece_count INT,

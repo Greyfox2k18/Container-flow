@@ -1,0 +1,105 @@
+/* Report Builder editor. Everything is scoped to .rb-* so it can't disturb the site theme. */
+.rb-app { --rb-primary: #1e3a5f; --rb-border: #e2e8f0; --rb-muted: #6b7280; --rb-bg: #f8fafc; --rb-danger: #dc2626;
+  font-size: 14px; color: #1f2937; padding: 16px; max-width: 1600px; margin: 0 auto; }
+.rb-app *, .rb-app *::before, .rb-app *::after { box-sizing: border-box; }
+.rb-loading, .rb-muted { color: var(--rb-muted); }
+.rb-small { font-size: 12px; }
+.rb-strong { font-weight: 600; }
+.rb-nowrap { white-space: nowrap; }
+.rb-spacer { flex: 1; }
+
+.rb-titlebar { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+.rb-titlebar h1 { font-size: 22px; margin: 0; }
+.rb-titlebar-main { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; flex: 1; min-width: 280px; }
+.rb-titlebar-main .rb-input { max-width: 340px; }
+.rb-name { font-size: 18px !important; font-weight: 600; }
+.rb-back { color: var(--rb-primary); text-decoration: none; margin-right: 6px; white-space: nowrap; }
+.rb-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.rb-actions .rb-input { width: auto; }
+.rb-status { font-size: 12px; color: var(--rb-muted); margin-right: 6px; }
+.rb-status-dirty { color: #b45309; font-weight: 600; }
+
+.rb-card { background: #fff; border: 1px solid var(--rb-border); border-radius: 8px; }
+.rb-card-body { padding: 16px; overflow-x: auto; }
+.rb-table { width: 100%; border-collapse: collapse; }
+.rb-table th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--rb-muted); padding: 8px; border-bottom: 2px solid var(--rb-border); }
+.rb-table td { padding: 8px; border-bottom: 1px solid #f1f5f9; vertical-align: middle; }
+.rb-table td .rb-btn { margin: 0 2px 2px 0; }
+.rb-ok { color: #15803d; } .rb-bad { color: var(--rb-danger); }
+
+.rb-input { display: block; width: 100%; padding: 6px 8px; border: 1px solid #cbd5e1; border-radius: 6px; background: #fff; font: inherit; color: inherit; min-height: 34px; }
+.rb-input:focus { outline: 2px solid #93c5fd; outline-offset: 0; border-color: #3b82f6; }
+textarea.rb-input { resize: vertical; }
+.rb-narrow { width: 110px !important; flex: 0 0 auto !important; }
+.rb-kind { width: 160px !important; flex: 0 0 auto !important; }
+.rb-multi { min-height: 70px; }
+.rb-json { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; }
+.rb-color { width: 40px; height: 34px; padding: 2px; border: 1px solid #cbd5e1; border-radius: 6px; flex: 0 0 auto; }
+
+.rb-btn { display: inline-flex; align-items: center; gap: 4px; padding: 6px 12px; border: 1px solid #cbd5e1; border-radius: 6px; background: #fff;
+  color: #1f2937; font: inherit; font-size: 13px; cursor: pointer; text-decoration: none; line-height: 1.3; min-height: 32px; }
+.rb-btn:hover { background: var(--rb-bg); }
+.rb-btn:focus-visible { outline: 2px solid #3b82f6; outline-offset: 1px; }
+.rb-btn-primary { background: var(--rb-primary); border-color: var(--rb-primary); color: #fff; font-weight: 600; }
+.rb-btn-primary:hover { background: #16304f; }
+.rb-btn-on { background: #dcfce7; border-color: #86efac; color: #166534; }
+.rb-btn-danger { color: var(--rb-danger); border-color: #fecaca; }
+.rb-btn-small { padding: 4px 10px; font-size: 12px; min-height: 28px; margin-top: 4px; }
+.rb-btn-add { padding: 4px 10px; font-size: 12px; border-style: dashed; }
+.rb-btn-link { border: none; background: none; color: var(--rb-primary); padding: 0; min-height: 0; text-decoration: underline; font-size: 12px; }
+.rb-icon { padding: 2px 7px; min-height: 26px; font-size: 12px; color: var(--rb-muted); }
+.rb-icon-danger:hover { color: var(--rb-danger); border-color: #fecaca; }
+
+.rb-split { display: grid; grid-template-columns: minmax(380px, 5fr) 6fr; gap: 16px; align-items: start; }
+@media (max-width: 1000px) { .rb-split { grid-template-columns: 1fr; } }
+.rb-left { background: #fff; border: 1px solid var(--rb-border); border-radius: 8px; max-height: calc(100vh - 140px); overflow-y: auto; }
+.rb-tabs { display: flex; border-bottom: 1px solid var(--rb-border); position: sticky; top: 0; background: #fff; z-index: 2; }
+.rb-tab { flex: 1; padding: 10px 6px; border: none; background: none; font: inherit; font-size: 13px; color: var(--rb-muted); cursor: pointer; border-bottom: 2px solid transparent; }
+.rb-tab-on { color: var(--rb-primary); border-bottom-color: var(--rb-primary); font-weight: 600; }
+.rb-panel { padding: 14px; }
+.rb-h { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: #374151; margin: 18px 0 8px; }
+.rb-h:first-child { margin-top: 0; }
+.rb-hint { font-size: 12px; color: var(--rb-muted); margin: 4px 0 8px; }
+
+.rb-palette { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 12px; }
+.rb-palette > div { width: 100%; }
+.rb-blocks { display: flex; flex-direction: column; gap: 8px; }
+.rb-block { border: 1px solid var(--rb-border); border-radius: 8px; background: #fff; }
+.rb-block-open { border-color: #93c5fd; box-shadow: 0 1px 4px rgba(30, 58, 95, .08); }
+.rb-block-head { display: flex; align-items: center; gap: 6px; padding: 6px 8px; }
+.rb-block-title { flex: 1; text-align: left; border: none; background: none; font: inherit; cursor: pointer; padding: 4px; min-width: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: inherit; }
+.rb-block-tools { display: flex; gap: 2px; flex: 0 0 auto; }
+.rb-block-body { padding: 4px 12px 12px; border-top: 1px solid #f1f5f9; }
+.rb-handle { cursor: grab; color: #94a3b8; font-size: 16px; padding: 0 4px; user-select: none; }
+.sortable-ghost { opacity: .4; }
+.rb-badge { display: inline-block; font-size: 10px; background: #e0e7ff; color: #3730a3; border-radius: 4px; padding: 0 5px; margin-left: 6px; vertical-align: middle; }
+
+.rb-row { margin: 8px 0; }
+.rb-label { display: block; font-size: 12px; font-weight: 600; color: #374151; margin-bottom: 3px; }
+.rb-inline, .rb-subrow { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 4px 0; }
+.rb-subrow > .rb-input { flex: 1 1 120px; width: auto; }
+.rb-inline > .rb-input { width: auto; flex: 1 1 140px; }
+.rb-check { display: flex; gap: 6px; align-items: center; margin: 6px 0; font-size: 13px; cursor: pointer; }
+.rb-section { margin-top: 10px; padding-top: 8px; border-top: 1px dashed var(--rb-border); }
+.rb-section-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--rb-muted); margin-bottom: 4px; }
+.rb-showif { margin-top: 10px; padding: 6px 8px; background: var(--rb-bg); border-radius: 6px; }
+.rb-cols { display: flex; flex-direction: column; gap: 4px; }
+.rb-col { display: flex; align-items: center; gap: 6px; padding: 4px 6px; border: 1px solid #f1f5f9; border-radius: 6px; background: var(--rb-bg); }
+.rb-col-name { flex: 0 0 120px; font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rb-col-label { flex: 1; }
+.rb-metric { border: 1px solid var(--rb-border); border-radius: 8px; padding: 8px 10px; margin-bottom: 8px; }
+.rb-metric-value { font-weight: 700; color: var(--rb-primary); }
+.rb-danger-zone { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--rb-border); }
+
+.rb-preview { position: sticky; top: 8px; min-height: 300px; }
+.rb-preview-busy .rb-frame { opacity: .55; transition: opacity .2s; }
+.rb-preview-meta { background: #fff; border: 1px solid var(--rb-border); border-radius: 8px 8px 0 0; padding: 8px 12px; }
+.rb-frame { width: 100%; height: calc(100vh - 210px); min-height: 480px; border: 1px solid var(--rb-border); border-top: none; border-radius: 0 0 8px 8px; background: #fff; display: block; }
+.rb-alert { background: #fef2f2; border: 1px solid #fecaca; color: #991b1b; border-radius: 6px; padding: 8px 12px; margin-bottom: 8px; font-size: 13px; }
+
+.rb-toast { position: fixed; right: 16px; bottom: 16px; z-index: 9999; background: #1f2937; color: #fff; padding: 10px 14px; border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, .2); max-width: 420px; font-size: 13px; transition: opacity .5s; }
+.rb-toast + .rb-toast { bottom: 70px; }
+.rb-toast-bad { background: #991b1b; }
+.rb-toast-out { opacity: 0; }

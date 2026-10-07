@@ -146,6 +146,10 @@ $rbScheduleText = function ($r) use ($rbDow) {
     <div class="col-12">
       <a href="<?= $us_url_root ?>users/admin.php?view=plugins">Return to the Plugin Manager</a>
       <h1>Report Builder</h1>
+      <?php $rbEditorUrl = RbReports::config()['editor_url']; if ($rbEditorUrl): ?>
+        <p><a class="btn btn-primary" href="<?= $h($us_url_root . ltrim($rbEditorUrl, '/')) ?>">Open the report editor</a>
+          <span class="text-muted ms-2">Supervisors build and send reports there. This page is the admin view: datasets, plus a raw JSON editor.</span></p>
+      <?php endif; ?>
 
       <?php foreach ($rbMsg as $m): ?><div class="alert alert-success"><?= $h($m) ?></div><?php endforeach; ?>
       <?php foreach ($rbErr as $m): ?><div class="alert alert-danger"><?= $h($m) ?></div><?php endforeach; ?>

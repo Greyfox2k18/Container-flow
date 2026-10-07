@@ -27,6 +27,17 @@ return [
         return defined('CONTAINER_SITE_URL') ? CONTAINER_SITE_URL : '';
     },
 
+    'editor_url'    => 'usersc/reports_builder.php',
     'brand'         => 'Container Flow',
     'primary_color' => '#1e3a5f',
+
+    // Who can do what (UserSpice master accounts can always do everything).
+    // Supervisors build and send; only people without warehouse tags — who
+    // already see every warehouse — can make reports that ignore warehouses.
+    'can_build'   => function ($user_id) { return function_exists('isSupervisor') && isSupervisor($user_id); },
+    'can_send'    => function ($user_id) { return function_exists('isSupervisor') && isSupervisor($user_id); },
+    'can_unscope' => function ($user_id) {
+        return function_exists('isSupervisor') && isSupervisor($user_id)
+            && function_exists('getUserWarehouseIds') && empty(getUserWarehouseIds($user_id));
+    },
 ];

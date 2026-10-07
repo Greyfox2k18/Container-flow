@@ -11,7 +11,12 @@
  *     'base_url'      => 'https://example.com' or a callable returning it,
  *     'brand'         => 'Container Flow',
  *     'primary_color' => '#1e3a5f',
+ *     'editor_url'    => 'usersc/reports_builder.php',              // page that hosts the editor (site-relative)
+ *     'can_build'     => function ($user_id) { return bool; },  // open the editor, save, test-send
+ *     'can_send'      => function ($user_id) { return bool; },  // "send now" to real recipients
+ *     'can_unscope'   => function ($user_id) { return bool; },  // make/preview reports that ignore dataset scope
  *   ]
+ * Without the permission hooks only UserSpice master accounts get in.
  * Attachments are [['name', 'content' (raw), 'type']]. Without a mailer the
  * plugin falls back to UserSpice's email() (no attachments).
  *
@@ -57,7 +62,41 @@ class RbReports {
             'base_url'      => (string) $base,
             'brand'         => (string) ($cfg['brand'] ?? ''),
             'primary_color' => (string) ($cfg['primary_color'] ?? '#1e3a5f'),
+            'editor_url'    => (string) ($cfg['editor_url'] ?? ''),
+            'can_build'     => $cfg['can_build'] ?? null,
+            'can_send'      => $cfg['can_send'] ?? null,
+            'can_unscope'   => $cfg['can_unscope'] ?? null,
         ];
+    }
+
+    // ── permissions ─────────────────────────────────────────────────────────
+
+    public static function canBuild($user_id)   { return self::allowed('can_build', $user_id); }
+    public static function canSend($user_id)    { return self::allowed('can_send', $user_id) || (self::config()['can_send'] === null && self::canBuild($user_id)); }
+    public static function canUnscope($user_id) { return self::allowed('can_unscope', $user_id); }
+
+    private static function allowed($hook, $user_id) {
+        $user_id = (int) $user_id;
+        if (!$user_id) return false;
+        global $master_account;
+        if (is_array($master_account ?? null) && in_array($user_id, array_map('intval', $master_account), true)) return true;
+        $fn = self::config()[$hook];
+        if (!is_callable($fn)) return false;
+        try {
+            return (bool) call_user_func($fn, $user_id);
+        } catch (\Throwable $e) {
+            error_log("Report builder: $hook check failed: " . $e->getMessage());
+            return false;
+        }
+    }
+
+    public static function scheduleText($r) {
+        if (!$r->schedule_frequency) return 'Not scheduled';
+        $t = date('g A', mktime((int) $r->schedule_hour, 0));
+        $dow = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+        if ($r->schedule_frequency === 'weekly') return $dow[(int) $r->schedule_day_of_week] . 's at ' . $t;
+        if ($r->schedule_frequency === 'monthly') return 'Monthly on day ' . (int) $r->schedule_day_of_month . ' at ' . $t;
+        return 'Daily at ' . $t;
     }
 
     public static function resetConfig() { self::$config = null; }

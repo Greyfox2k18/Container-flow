@@ -171,7 +171,7 @@
 - Checked in both `container_create.php` and `ajax/container_update.php`
 
 ## Report Builder plugin (usersc/plugins/report_builder/, usersc/report_datasets/)
-Replaces the fixed-format reports with saved reports built from blocks. Being built in stages; stages 1–2 are in.
+Replaces the fixed-format reports with saved reports built from blocks. Being built in stages; stages 1–3 are in.
 - **Stage 1 — datasets + safe query builder** (no DB changes; existing reports untouched). Verified on live: "Check datasets" OK
   - UserSpice plugin layout (info.xml, install/activate/uninstall/delete/migrate, configure.php) — UserSpice 6.1.2; stage 1 installed on live Oct 7, 2026
   - `.gitignore` now ignores `usersc/plugins/*` EXCEPT `report_builder/` so the plugin is tracked
@@ -192,6 +192,12 @@ Replaces the fixed-format reports with saved reports built from blocks. Being bu
   - `usersc/report_presets/daily_digest.json` — the daily digest as blocks. Test runs the ORIGINAL `cron/daily_digest.php` unmodified side by side and requires identical subject, visible text, links and recipients across 4 scenarios
   - Configure page: create from preset, preview (sandboxed iframe), test to me, send now, activate/pause, edit schedule/recipients/scope/layout JSON (layout is test-rendered before save), run log. Text fields read from raw `$_POST` (Input::get escaping would double-encode)
   - `containers` dataset: added `assigned_to_name`, `drive_backed_up_at`; container # shows monospace; loads `container_functions.php` itself so the warehouse scope can't silently fail open
+- **Stage 3 — editor UI** (`usersc/reports_builder.php` now hosts it)
+  - `usersc/reports_builder.php` replaced: was the old fixed-form builder (never used — no reports existed); now a thin page that includes the plugin's editor (`assets/includes/rb_editor_page.php`). Same URL, same UserSpice page permission
+  - `usersc/ajax/report_builder_api.php` — session/CSRF/JSON wrapper around `RbApi::handle()` (plugin). Reads `payload` from raw `$_POST` (Input::get would escape the JSON)
+  - Editor (`assets/js/rb_editor.js`, `assets/css/rb_editor.css`, no build step): report list (create from preset, copy, test-to-me, send now, activate, delete); block palette; drag to reorder (SortableJS 1.15.2, bundled locally in `assets/js/`, MIT) plus ▲▼ buttons; per-block settings (columns + headings, filters by field type, date range, sort, totals/group-by with day/week/month/year, show-only-if); Metrics & filters tab (metrics, report-level filters e.g. client multi-select); Delivery tab (schedule, recipients by email/user/permission group with notes, data access, CSV, recent runs); Advanced tab (subject rules, layout JSON import/export). Live preview re-renders on the server ~0.7s after each change, shown in a sandboxed iframe
+  - Permissions (`usersc/report_builder_config.php`): `can_build` / `can_send` = supervisors; `can_unscope` = supervisors with no warehouse tags. Master accounts can always do everything. A warehouse-restricted builder can't save or activate an "everything" report, and their previews are always limited to their own warehouses
+  - Tests: `tests/test_stage3.php` (API: permissions, round trip, validation, scope rules); `tests/e2e/run_e2e.sh` — headless Chromium + Playwright against `php -S` with a fake UserSpice (dev machines only; tests/ is denied by .htaccess)
 - **Switching the daily digest over** (when happy with the preview/test): activate the "Daily Digest" report, add the plugin cron line, remove the `cron/daily_digest.php` cron line. `ajax/trigger_digest.php` (settings page button) still uses the old code until then
 - **Finding:** the spec assumed `report_customers`, recipient `note`, `report_kind`, `layout_json` and client-digest functions already existed — they did not, and no reports had been made in the old builder, so nothing needed migrating. Live schema has no `completed_at`/`reviewed_at`; "completed" dates use `updated_at` like the digest
 
