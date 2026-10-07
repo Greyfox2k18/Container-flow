@@ -170,6 +170,20 @@
 - New `customers.use_shipment_number_as_id` flag — flagged clients get checked on `shipment_number` instead of `container_number`, via `getIdentifierField($customer_id)`
 - Checked in both `container_create.php` and `ajax/container_update.php`
 
+## Report Builder plugin (usersc/plugins/report_builder/, usersc/report_datasets/)
+Replaces the fixed-format reports with saved reports built from blocks. Being built in stages; stage 1 is in.
+- **Stage 1 — datasets + safe query builder** (no DB changes, nothing user-facing yet; existing reports untouched)
+  - UserSpice plugin layout (info.xml, install/activate/uninstall/delete/migrate, configure.php) — targets UserSpice 6.1.2; not yet installed on the live site
+  - `.gitignore` now ignores `usersc/plugins/*` EXCEPT `report_builder/` so the plugin is tracked
+  - Datasets register from `usersc/report_datasets/*.php` (outside the plugin folder so plugin updates never overwrite them) via `rb_register_dataset()`; loaded lazily, one bad file is reported on the configure page instead of breaking the rest
+  - `usersc/report_datasets/containers.php` — containers + customers/warehouses/users joins; scope = `getUserWarehouseIds()` rule (tagged users see own warehouses + unassigned, untagged unrestricted — same as `filterContainersByWarehouseAccess()`)
+  - `RbQuery::build()/run()` — fields, filters, date window, group by (with day/week/month/year buckets), count/count_distinct/sum/avg/min/max, sort, limit. Only registered field keys and fixed keywords reach SQL; every user value is a bound parameter
+  - Date windows reproduce `getReportDateRangeBounds()` (plus this_week/last_week/this_year/custom)
+  - `delete.php` deliberately does NOT drop `report_*` tables (live data predates the plugin)
+  - Tests: `php usersc/plugins/report_builder/tests/run_tests.php` (CLI only, in-memory SQLite, folder denied by .htaccess)
+  - Configure page "Check datasets against the database" runs each dataset with all fields (5 rows) to prove the config matches the live schema
+- **Finding:** the spec assumed `report_customers`, recipient `note`, `report_kind`, `layout_json` and client-digest functions already existed — they do not (live `SHOW TABLES LIKE 'report%'` shows only definitions/recipients/run_log; live reports_*.php match the repo). They will be built as part of the plugin. `containers.completed_at/reviewed_at` still unconfirmed — waiting on full `SHOW CREATE TABLE`
+
 ## Still outstanding
 - `container_edit.php` was never uploaded this session — warehouse picker, identifier validation, and missing-photos alert are NOT wired into it if it's a separate page from the Pro dashboard modal
 - Missing-photos alert action was requested for `container_view.php`'s existing Actions button — not yet done, file not uploaded

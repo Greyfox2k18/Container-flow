@@ -1,6 +1,7 @@
 # UserSpice core folders — not ours
 users/
-usersc/plugins/
+usersc/plugins/*
+!usersc/plugins/report_builder/
 usersc/templates/
 usersc/widgets/
 usersc/scripts/

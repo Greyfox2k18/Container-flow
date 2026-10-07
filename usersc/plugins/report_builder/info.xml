@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<plugin>
+  <name>Report Builder</name>
+  <author>Container Flow</author>
+  <website>https://container-flow.com</website>
+  <version>0.1.0</version>
+  <release>October 7, 2026</release>
+  <tested>6.1.2</tested>
+  <fa_icon>fa fa-table</fa_icon>
+  <description>Build email/web/CSV reports from registered datasets with a block editor. Datasets are registered per project in usersc/report_datasets/.</description>
+  <button>Report Builder</button>
+</plugin>
