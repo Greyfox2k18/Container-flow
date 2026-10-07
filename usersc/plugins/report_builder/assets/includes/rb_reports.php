@@ -48,6 +48,53 @@ class RbReports {
 
     // ── config ──────────────────────────────────────────────────────────────
 
+    const T_SETTINGS = 'plg_rb_settings';
+    /** Plugin settings (Admin → Plugins → Report Builder) and their defaults. */
+    const SETTINGS = [
+        'mail_provider'     => 'userspice',   // userspice | sparkpost | postmark
+        'sparkpost_api_key' => '',
+        'sparkpost_region'  => 'us',          // us | eu
+        'postmark_token'    => '',
+        'from_email'        => '',
+        'from_name'         => '',
+        'reply_to'          => '',
+        'base_url'          => '',
+        'brand'             => '',
+        'primary_color'     => '#1e3a5f',
+        'build_perms'       => '2',           // permission IDs, comma separated; master accounts always allowed
+        'send_perms'        => '',            // empty = same as build
+        'unscope_perms'     => '2',
+    ];
+    private static $settings = null;
+
+    /** Saved plugin settings merged over the defaults. Missing table → defaults. */
+    public static function settings() {
+        if (self::$settings !== null) return self::$settings;
+        $saved = [];
+        try {
+            $db = DB::getInstance();
+            $q = $db->query('SELECT name, value FROM ' . self::T_SETTINGS);
+            if (!$db->error()) foreach ($q->results() as $r) $saved[$r->name] = (string) $r->value;
+        } catch (\Throwable $e) {}
+        return self::$settings = array_merge(self::SETTINGS, array_intersect_key($saved, self::SETTINGS));
+    }
+
+    public static function saveSettings(array $values) {
+        $db = DB::getInstance();
+        foreach (array_intersect_key($values, self::SETTINGS) as $k => $v) {
+            $db->query('DELETE FROM ' . self::T_SETTINGS . ' WHERE name = ?', [$k]);
+            $db->insert(self::T_SETTINGS, ['name' => $k, 'value' => (string) $v]);
+        }
+        self::$settings = null;
+        self::$config = null;
+        self::$baseUrl = null;
+    }
+
+    /**
+     * Effective configuration: the project config file
+     * (usersc/report_builder_config.php) wins; anything it leaves out comes from
+     * the plugin settings page. Which source set each value is in 'from_file'.
+     */
     public static function config() {
         if (self::$config !== null) return self::$config;
         $file = self::$configFile ?? dirname(__DIR__, 4) . '/report_builder_config.php';
@@ -56,17 +103,41 @@ class RbReports {
             $loaded = (function ($file) { return include $file; })($file);
             if (is_array($loaded)) $cfg = $loaded;
         }
+        $st = self::settings();
+        $perm = function ($csv) {
+            $ids = array_values(array_filter(array_map('intval', explode(',', (string) $csv))));
+            if (!$ids) return null;
+            return function ($user_id) use ($ids) { return function_exists('hasPerm') && hasPerm($ids, $user_id); };
+        };
         return self::$config = [
-            'mailer'        => $cfg['mailer'] ?? null,
-            'base_url'      => $cfg['base_url'] ?? '',     // string or callable — resolved by baseUrl() only when rendering
+            'mailer'        => $cfg['mailer'] ?? null,           // custom sender callable (overrides the built-in ones)
+            'mailer_inline' => (bool) ($cfg['mailer_inline'] ?? false), // custom sender handles inline (cid:) images
+            'mail'          => $cfg['mail'] ?? null,             // array|callable of mail settings (overrides the settings page)
+            'base_url'      => $cfg['base_url'] ?? $st['base_url'],  // string or callable — resolved by baseUrl() only when rendering
             'builtin_datasets' => (bool) ($cfg['builtin_datasets'] ?? true),
-            'brand'         => (string) ($cfg['brand'] ?? ''),
-            'primary_color' => (string) ($cfg['primary_color'] ?? '#1e3a5f'),
-            'editor_url'    => (string) ($cfg['editor_url'] ?? ''),
-            'can_build'     => $cfg['can_build'] ?? null,
-            'can_send'      => $cfg['can_send'] ?? null,
-            'can_unscope'   => $cfg['can_unscope'] ?? null,
+            'brand'         => (string) ($cfg['brand'] ?? $st['brand']),
+            'primary_color' => (string) ($cfg['primary_color'] ?? $st['primary_color']),
+            'editor_url'    => (string) ($cfg['editor_url'] ?? 'usersc/plugins/report_builder/reports.php'),
+            'can_build'     => $cfg['can_build'] ?? $perm($st['build_perms']),
+            'can_send'      => $cfg['can_send'] ?? $perm($st['send_perms']),
+            'can_unscope'   => $cfg['can_unscope'] ?? $perm($st['unscope_perms']),
+            'from_file'     => array_keys($cfg),
         ];
+    }
+
+    /** Mail settings for RbMail: project config 'mail' entry, else the settings page. */
+    public static function mailSettings() {
+        $st = self::settings();
+        $m = [
+            'provider' => $st['mail_provider'], 'sparkpost_api_key' => $st['sparkpost_api_key'], 'sparkpost_region' => $st['sparkpost_region'],
+            'postmark_token' => $st['postmark_token'], 'from_email' => $st['from_email'], 'from_name' => $st['from_name'], 'reply_to' => $st['reply_to'],
+        ];
+        $over = self::config()['mail'];
+        if (is_callable($over)) $over = call_user_func($over);
+        if (is_array($over)) $m = array_merge($m, array_intersect_key($over, $m));
+        $m['base_url'] = self::baseUrl();
+        if (!in_array($m['provider'], RbMail::PROVIDERS, true)) $m['provider'] = 'userspice';
+        return $m;
     }
 
     // ── permissions ─────────────────────────────────────────────────────────
@@ -99,7 +170,7 @@ class RbReports {
         return 'Daily at ' . $t;
     }
 
-    public static function resetConfig() { self::$config = null; self::$baseUrl = null; }
+    public static function resetConfig() { self::$config = null; self::$baseUrl = null; self::$settings = null; }
 
     private static $baseUrl = null;
     public static function baseUrl() {
@@ -308,11 +379,13 @@ class RbReports {
             $groups[(string) $viewer][] = $r;
         }
 
-        $mailer = self::config()['mailer'] ?: [__CLASS__, 'userspiceMailer'];
+        $custom = self::config()['mailer'];
+        $mail = $custom ? null : self::mailSettings();
+        $inlineOk = $custom ? self::config()['mailer_inline'] : RbMail::supportsInline($mail);
         $ok = true; $errors = []; $replies = []; $rows = 0; $sent = 0;
         foreach ($groups as $viewer => $people) {
             try {
-                $out = self::render($report, self::scopeCtx($report, $viewer === '' ? null : (int) $viewer), ['now' => $now]);
+                $out = self::render($report, self::scopeCtx($report, $viewer === '' ? null : (int) $viewer), ['now' => $now, 'mode' => 'email']);
             } catch (\Throwable $e) {
                 $ok = false;
                 $errors[] = $e->getMessage();
@@ -321,8 +394,16 @@ class RbReports {
             $rows += $out['row_count'];
             $subject = $trigger === 'test' ? '[TEST] ' . $out['subject'] : $out['subject'];
             $attachments = !empty($report->attach_csv) ? $out['attachments'] : [];
+            $html = $out['html'];
+            foreach ($out['images'] as $img) {
+                if ($inlineOk) $attachments[] = $img + ['inline' => true];
+                // Sender can't do cid: images — embed them (shows in most desktop/mobile apps; Gmail web hides data: images).
+                else $html = str_replace('cid:' . $img['cid'], 'data:' . $img['type'] . ';base64,' . base64_encode($img['content']), $html);
+            }
+            $emails = array_column($people, 'email');
             try {
-                $res = call_user_func($mailer, array_column($people, 'email'), $subject, $out['html'], $attachments);
+                $res = $custom ? call_user_func($custom, $emails, $subject, $html, $attachments)
+                               : RbMail::send($mail, $emails, $subject, $html, $attachments);
             } catch (\Throwable $e) {
                 $res = ['success' => false, 'message' => $e->getMessage()];
             }
@@ -342,15 +423,6 @@ class RbReports {
             DB::getInstance()->update(self::T_REPORTS, (int) $report->id, ['last_sent_at' => $now->format('Y-m-d H:i:s')]);
         }
         return ['success' => $ok, 'message' => $msg, 'recipients' => $sent, 'rows' => $rows];
-    }
-
-    /** Fallback mailer: UserSpice's email(), one message per address, no attachments. */
-    public static function userspiceMailer(array $to, $subject, $html, array $attachments) {
-        if (!function_exists('email')) return ['success' => false, 'message' => 'No mailer configured (usersc/report_builder_config.php).'];
-        foreach ($to as $addr) {
-            if (!email($addr, $subject, $html)) return ['success' => false, 'message' => "UserSpice email() failed for $addr"];
-        }
-        return ['success' => true, 'message' => ''];
     }
 
     public static function log($report_id, $trigger, $recipient_count, $row_count, $success, $error = null) {

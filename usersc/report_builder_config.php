@@ -7,24 +7,29 @@
 if (count(get_included_files()) == 1) die();
 
 return [
-    // Same sender as every other Container Flow email (SparkPost or Postmark,
-    // whichever sparkpost_email.php routes to).
-    'mailer' => function (array $to, $subject, $html, array $attachments) {
+    // Send with the plugin's built-in SparkPost/Postmark sender, using the
+    // provider, keys and from-address already saved in Container Flow
+    // Settings — no need to enter them again on the plugin's settings page.
+    // (The built-in sender also supports inline chart images.)
+    'mail' => function () {
         global $abs_us_root, $us_url_root;
         require_once __DIR__ . '/includes/container_functions.php'; // getContainerSetting()
-        require_once __DIR__ . '/includes/sparkpost_email.php';
-        $att = array_map(function ($a) {
-            return ['name' => $a['name'], 'data' => base64_encode($a['content']), 'type' => $a['type']];
-        }, $attachments);
-        $r = sendSparkPostEmail($to, $subject, $html, null, null, $att);
-        return ['success' => !empty($r['success']), 'message' => $r['message'] ?? ''];
+        return [
+            'provider'          => getContainerSetting('email_provider', 'sparkpost') === 'postmark' ? 'postmark' : 'sparkpost',
+            'sparkpost_api_key' => getContainerSetting('sparkpost_api_key', ''),
+            'postmark_token'    => getContainerSetting('postmark_api_key', ''),
+            'from_email'        => getContainerSetting('sparkpost_from_email', 'noreply@mail.container-flow.com'),
+            'from_name'         => getContainerSetting('sparkpost_from_name', 'Container Flow'),
+        ];
     },
 
+    // Site address for button links. Loads container_functions.php itself:
+    // from the cron nothing else has loaded it yet, and without it the links
+    // in emails would come out relative (broken).
     'base_url' => function () {
-        if (function_exists('getContainerSetting')) {
-            return getContainerSetting('site_url', defined('CONTAINER_SITE_URL') ? CONTAINER_SITE_URL : '');
-        }
-        return defined('CONTAINER_SITE_URL') ? CONTAINER_SITE_URL : '';
+        global $abs_us_root, $us_url_root;
+        require_once __DIR__ . '/includes/container_functions.php';
+        return getContainerSetting('site_url', CONTAINER_SITE_URL);
     },
 
     'editor_url'    => 'usersc/reports_builder.php',

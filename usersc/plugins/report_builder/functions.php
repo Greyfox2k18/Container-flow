@@ -6,7 +6,9 @@ if (count(get_included_files()) == 1) die();
 
 require_once __DIR__ . '/assets/includes/rb_registry.php';
 require_once __DIR__ . '/assets/includes/rb_query.php';
+require_once __DIR__ . '/assets/includes/rb_chart.php';
 require_once __DIR__ . '/assets/includes/rb_render.php';
+require_once __DIR__ . '/assets/includes/rb_mail.php';
 require_once __DIR__ . '/assets/includes/rb_reports.php';
 require_once __DIR__ . '/assets/includes/rb_api.php';
 

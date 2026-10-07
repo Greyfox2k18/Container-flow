@@ -7,7 +7,9 @@
 if (PHP_SAPI !== 'cli') die();
 
 require_once __DIR__ . '/fake_userspice.php';
+require_once __DIR__ . '/../assets/includes/rb_chart.php';
 require_once __DIR__ . '/../assets/includes/rb_render.php';
+require_once __DIR__ . '/../assets/includes/rb_mail.php';
 require_once __DIR__ . '/../assets/includes/rb_reports.php';
 
 $GLOBALS['rb_sent'] = [];

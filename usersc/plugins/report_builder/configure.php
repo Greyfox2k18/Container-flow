@@ -55,7 +55,35 @@ if (!empty($_POST)) {
   $rid = (int) Input::get('report_id');
   $report = $rid && $rbTablesOk ? RbReports::get($rid) : null;
 
-  if ($action === 'check_datasets') {
+  if ($action === 'save_settings') {
+    // Only fields that were submitted change: greyed-out (config-file) fields
+    // aren't posted by the browser and must not wipe what's saved.
+    $vals = [];
+    foreach (['mail_provider', 'sparkpost_region', 'from_email', 'from_name', 'reply_to', 'base_url', 'brand', 'primary_color'] as $k) {
+      if (array_key_exists($k, $_POST)) $vals[$k] = $raw($k);
+    }
+    foreach (['sparkpost_api_key', 'postmark_token'] as $k) if ($raw($k) !== '') $vals[$k] = $raw($k);   // blank = keep the saved key
+    foreach (['build_perms', 'send_perms', 'unscope_perms'] as $k) {
+      if (!array_key_exists($k . '_present', $_POST)) continue;   // a multi-select with nothing picked posts nothing
+      $ids = isset($_POST[$k]) && is_array($_POST[$k]) ? array_filter(array_map('intval', $_POST[$k])) : [];
+      $vals[$k] = implode(',', $ids);
+    }
+    if (isset($vals['mail_provider']) && !in_array($vals['mail_provider'], RbMail::PROVIDERS, true)) $vals['mail_provider'] = 'userspice';
+    if (isset($vals['sparkpost_region']) && $vals['sparkpost_region'] !== 'eu') $vals['sparkpost_region'] = 'us';
+    foreach (['from_email', 'reply_to'] as $k) if (($vals[$k] ?? '') !== '' && !filter_var($vals[$k], FILTER_VALIDATE_EMAIL)) $rbErr[] = "\"{$vals[$k]}\" isn't a valid email address.";
+    if (($vals['base_url'] ?? '') !== '' && !preg_match('#^https?://[^\s]+$#i', $vals['base_url'])) $rbErr[] = 'Site address must start with http:// or https://';
+    if (isset($vals['primary_color']) && !preg_match('/^#[0-9a-fA-F]{6}$/', $vals['primary_color'])) $vals['primary_color'] = '#1e3a5f';
+    if (isset($vals['base_url'])) $vals['base_url'] = rtrim($vals['base_url'], '/');
+    if (!$rbErr) { RbReports::saveSettings($vals); $rbMsg[] = 'Settings saved.'; }
+  } elseif ($action === 'test_email') {
+    $cfgNow = RbReports::config();
+    $html = '<div style="font-family:Arial,sans-serif;padding:20px;"><h2 style="color:#1e3a5f;">Report Builder test</h2><p>If you can read this, scheduled reports can send email.</p></div>';
+    $to = [$user->data()->email];
+    $res = $cfgNow['mailer'] ? call_user_func($cfgNow['mailer'], $to, 'Report Builder test email', $html, [])
+                             : RbMail::send(RbReports::mailSettings(), $to, 'Report Builder test email', $html);
+    if (!empty($res['success'])) $rbMsg[] = 'Test email sent to ' . $user->data()->email . ' — ' . ($res['message'] ?? '');
+    else $rbErr[] = 'Test email failed: ' . ($res['message'] ?? 'unknown error');
+  } elseif ($action === 'check_datasets') {
     // Run each dataset once with every field, 5 rows, as the current user —
     // proves the config matches the live schema.
     $rbCheckResults = [];
@@ -157,7 +185,90 @@ $rbScheduleText = function ($r) use ($rbDow) {
         <div class="alert alert-warning">The report tables don't exist yet. Run this plugin's migrations (Plugin Manager → Update/Migrate), then reload.</div>
       <?php endif; ?>
 
-      <?php if ($rbTablesOk): ?>
+      <?php if ($rbTablesOk):
+        $rbSt = RbReports::settings();
+        $rbFromFile = RbReports::config()['from_file'];
+        $rbFileHas = function ($k) use ($rbFromFile) { return in_array($k, $rbFromFile, true); };
+        $rbMailFromFile = $rbFileHas('mail') || $rbFileHas('mailer');
+        $rbPerms = [];
+        try { $rbPerms = $db->query('SELECT id, name FROM permissions ORDER BY id')->results(); } catch (\Throwable $e) {}
+        $rbMask = function ($v) { return $v === '' ? 'not set' : 'saved — ends in ' . substr($v, -4); };
+        $rbLocked = function ($k) use ($rbFileHas, $h) { return $rbFileHas($k) ? ' disabled title="Set in usersc/report_builder_config.php"' : ''; };
+        // Value shown: what's actually in effect (config file beats the settings page).
+        $rbCfg = RbReports::config();
+        $rbShow = function ($k) use ($rbFileHas, $rbCfg, $rbSt) {
+          if (!$rbFileHas($k)) return $rbSt[$k];
+          return $k === 'base_url' ? RbReports::baseUrl() : (is_scalar($rbCfg[$k] ?? null) ? (string) $rbCfg[$k] : $rbSt[$k]);
+        };
+        $rbPermSel = function ($name, $csv, $locked) use ($rbPerms, $h) {
+          $ids = array_map('intval', explode(',', (string) $csv));
+          $o = ($locked ? '' : '<input type="hidden" name="' . $name . '_present" value="1">')
+             . '<select class="form-select" name="' . $name . '[]" multiple size="4"' . $locked . '>';
+          foreach ($rbPerms as $p) $o .= '<option value="' . (int) $p->id . '"' . (in_array((int) $p->id, $ids, true) ? ' selected' : '') . '>' . $h($p->name) . ' (#' . (int) $p->id . ')</option>';
+          return $o . '</select>';
+        };
+      ?>
+      <!-- ── Settings ────────────────────────────────────────────────────── -->
+      <details class="card mb-4" <?= ($rbSt['mail_provider'] === 'userspice' && !$rbMailFromFile) || !empty($_POST['action']) && in_array($_POST['action'], ['save_settings', 'test_email'], true) ? 'open' : '' ?>>
+        <summary class="card-header" style="cursor:pointer;"><strong>Settings</strong> — email, site address, who can build reports</summary>
+        <div class="card-body">
+          <?php if ($rbFromFile): ?>
+            <p class="text-muted">Greyed-out settings are set in <code>usersc/report_builder_config.php</code>, which takes priority over this page.</p>
+          <?php endif; ?>
+          <form method="post">
+            <?= tokenHere(); ?><input type="hidden" name="action" value="save_settings">
+            <h6>Email</h6>
+            <?php if ($rbMailFromFile): ?>
+              <div class="alert alert-info py-2">Email is configured in <code>usersc/report_builder_config.php</code><?= $rbFileHas('mail') ? ' (provider: ' . $h(RbReports::mailSettings()['provider']) . ')' : ' (custom sender)' ?>. Use <em>Send test email</em> below to check it.</div>
+            <?php endif; ?>
+            <fieldset <?= $rbMailFromFile ? 'disabled' : '' ?>>
+            <div class="row g-3">
+              <div class="col-md-4"><label class="form-label">Send with</label>
+                <select class="form-select" name="mail_provider">
+                  <?php foreach (['userspice' => "UserSpice's email settings (no attachments or chart images)", 'sparkpost' => 'SparkPost', 'postmark' => 'Postmark'] as $k => $l): ?>
+                    <option value="<?= $k ?>" <?= $rbSt['mail_provider'] === $k ? 'selected' : '' ?>><?= $h($l) ?></option>
+                  <?php endforeach; ?>
+                </select></div>
+              <div class="col-md-5"><label class="form-label">SparkPost API key <small class="text-muted">(<?= $h($rbMask($rbSt['sparkpost_api_key'])) ?>)</small></label>
+                <input class="form-control" type="password" name="sparkpost_api_key" autocomplete="new-password" placeholder="Leave blank to keep the saved key"></div>
+              <div class="col-md-3"><label class="form-label">SparkPost region</label>
+                <select class="form-select" name="sparkpost_region"><option value="us">US (api.sparkpost.com)</option><option value="eu" <?= $rbSt['sparkpost_region'] === 'eu' ? 'selected' : '' ?>>EU (api.eu.sparkpost.com)</option></select></div>
+              <div class="col-md-5"><label class="form-label">Postmark server token <small class="text-muted">(<?= $h($rbMask($rbSt['postmark_token'])) ?>)</small></label>
+                <input class="form-control" type="password" name="postmark_token" autocomplete="new-password" placeholder="Leave blank to keep the saved token"></div>
+              <div class="col-md-4"><label class="form-label">From address</label><input class="form-control" name="from_email" value="<?= $h($rbSt['from_email']) ?>" placeholder="reports@yourdomain.com"></div>
+              <div class="col-md-3"><label class="form-label">From name</label><input class="form-control" name="from_name" value="<?= $h($rbSt['from_name']) ?>"></div>
+              <div class="col-md-4"><label class="form-label">Reply-to <small class="text-muted">(optional)</small></label><input class="form-control" name="reply_to" value="<?= $h($rbSt['reply_to']) ?>"></div>
+            </div>
+            <small class="text-muted">The from address must be on a domain verified with SparkPost/Postmark.</small>
+            </fieldset>
+
+            <h6 class="mt-4">Site</h6>
+            <div class="row g-3">
+              <div class="col-md-5"><label class="form-label">Site address <small class="text-muted">(for links in emails)</small></label>
+                <input class="form-control" name="base_url" value="<?= $h($rbShow('base_url')) ?>" placeholder="https://<?= $h($_SERVER['HTTP_HOST'] ?? 'example.com') ?>"<?= $rbLocked('base_url') ?>></div>
+              <div class="col-md-4"><label class="form-label">Brand name <small class="text-muted">({brand})</small></label><input class="form-control" name="brand" value="<?= $h($rbShow('brand')) ?>"<?= $rbLocked('brand') ?>></div>
+              <div class="col-md-3"><label class="form-label">Header colour</label><input class="form-control form-control-color" type="color" name="primary_color" value="<?= $h($rbShow('primary_color')) ?>"<?= $rbLocked('primary_color') ?>></div>
+            </div>
+
+            <h6 class="mt-4">Who can use the report builder <small class="text-muted">(master accounts always can)</small></h6>
+            <div class="row g-3">
+              <div class="col-md-4"><label class="form-label">Build reports &amp; send tests</label><?= $rbPermSel('build_perms', $rbSt['build_perms'], $rbLocked('can_build')) ?></div>
+              <div class="col-md-4"><label class="form-label">Send to all recipients <small class="text-muted">(none = same as build)</small></label><?= $rbPermSel('send_perms', $rbSt['send_perms'], $rbLocked('can_send')) ?></div>
+              <div class="col-md-4"><label class="form-label">Make reports that ignore data restrictions</label><?= $rbPermSel('unscope_perms', $rbSt['unscope_perms'], $rbLocked('can_unscope')) ?></div>
+            </div>
+            <small class="text-muted">Ctrl/Cmd-click to pick several.</small>
+
+            <div class="mt-3 d-flex gap-2">
+              <button class="btn btn-success" type="submit">Save settings</button>
+            </div>
+          </form>
+          <form method="post" class="mt-2"><?= tokenHere(); ?><input type="hidden" name="action" value="test_email">
+            <button class="btn btn-outline-secondary" type="submit">Send test email to <?= $h($user->data()->email) ?></button></form>
+          <p class="text-muted mt-3 mb-0"><small>Scheduled sends need this cron line (runs hourly; each report sends only in its own hour):<br>
+            <code>0 * * * * <?= $h(PHP_BINDIR . '/php') ?> <?= $h(__DIR__ . '/cron/run.php') ?> &gt;&gt; <?= $h(dirname(__DIR__, 2) . '/logs/report_builder.log') ?> 2&gt;&amp;1</code></small></p>
+        </div>
+      </details>
+
       <!-- ── Reports ─────────────────────────────────────────────────────── -->
       <div class="card mb-4">
         <div class="card-header d-flex justify-content-between align-items-center">

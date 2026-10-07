@@ -101,7 +101,7 @@ test('preview returns HTML, subject, metrics; errors are readable', function () 
     check($p['ok'], json_encode($p));
     check(strpos($p['html'], 'n=3') !== false);
     eq(['n' => 3], $p['metrics']);
-    $p = RbApi::handle('preview', ['report' => $report(), 'layout' => ['blocks' => [['type' => 'chart']]]], 1);
+    $p = RbApi::handle('preview', ['report' => $report(), 'layout' => ['blocks' => [['type' => 'iframe']]]], 1);
     check(!$p['ok'] && stripos($p['error'], 'unknown block') !== false);
 });
 

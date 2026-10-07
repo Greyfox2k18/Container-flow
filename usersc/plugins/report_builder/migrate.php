@@ -71,6 +71,22 @@ if($checkC > 0){
     }
   }
 
+  // 00002 — plugin settings (email provider/keys, site URL, branding, permission levels).
+  $update = '00002';
+  if(!in_array($update,$existing)){
+    $db->query("CREATE TABLE IF NOT EXISTS plg_rb_settings (
+      name VARCHAR(64) NOT NULL PRIMARY KEY,
+      value TEXT NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    if(!$db->error()){
+      logger($user->data()->id,"Migrations","$update migration triggered for $plugin_name");
+      $existing[] = $update;
+      $count++;
+    }else{
+      logger($user->data()->id,"Migrations","$update migration FAILED for $plugin_name: ".$db->errorString());
+    }
+  }
+
   $new = json_encode($existing);
   $db->update('us_plugins',$plgRow->id,['updates'=>$new,'last_check'=>date("Y-m-d H:i:s")]);
   if(!$db->error()) {

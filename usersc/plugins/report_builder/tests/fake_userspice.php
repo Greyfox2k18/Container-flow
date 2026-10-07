@@ -88,6 +88,7 @@ function rb_fixture_db($dsn) {
       attach_csv INT DEFAULT 0, scope_mode TEXT DEFAULT 'creator', created_by INT,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP, updated_at TEXT, last_sent_at TEXT);
     CREATE TABLE plg_rb_recipients (id INTEGER PRIMARY KEY, report_id INT, kind TEXT, email TEXT, user_id INT, permission_id INT, note TEXT);
+    CREATE TABLE plg_rb_settings (name TEXT PRIMARY KEY, value TEXT);
     CREATE TABLE plg_rb_run_log (id INTEGER PRIMARY KEY, report_id INT, trigger_type TEXT, run_at TEXT DEFAULT CURRENT_TIMESTAMP,
       recipient_count INT, row_count INT, success INT, error_message TEXT);
     INSERT INTO customers VALUES (1,'Acme Imports'),(2,'Beta & Sons <Foods>');

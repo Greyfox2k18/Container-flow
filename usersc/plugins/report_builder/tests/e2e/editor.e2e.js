@@ -163,6 +163,24 @@ const ok = (cond, msg) => { console.log((cond ? '  ok   ' : '  FAIL ') + msg); i
   ok(JSON.parse(json).blocks.length === 12 && !json.includes('_uid'), 'layout JSON excludes editor-only keys');
   await page.screenshot({ path: SHOTS + '/3_advanced.png' });
 
+  // ── charts ──────────────────────────────────────────────────────────────
+  await page.getByRole('tab', { name: 'Blocks' }).click();
+  await page.getByRole('button', { name: '+ Chart' }).click();
+  await waitPreview();
+  const chartImg = () => frame().locator('img[alt^="Column chart"], img[alt^="Line chart"]');
+  ok(await chartImg().count() === 1, 'column chart image in preview');
+  ok((await chartImg().getAttribute('src')).startsWith('data:image/png;base64,'), 'preview embeds the PNG');
+  const cb = page.locator('.rb-block[data-type=chart]').last();
+  await cb.getByLabel('Split by').selectOption('type');
+  await cb.locator('.rb-row').filter({ hasText: 'Chart' }).first().locator('select').selectOption('line');
+  await waitPreview();
+  ok(await frame().locator('img[alt^="Line chart"]').count() === 1, 'switched to a line chart');
+  ok(/Inbound\s+Outbound/.test(await frame().locator('body').innerText()), 'legend for 2 series');
+  await page.locator('.rb-split').screenshot({ path: SHOTS + '/6_chart.png' });
+  await cb.locator('.rb-row').filter({ hasText: 'Chart' }).first().locator('select').selectOption('bar');
+  await waitPreview();
+  ok(await chartImg().count() === 0 && await frame().locator('td[style*="background:#2a78d6"]').count() > 0, 'bar chart drawn as HTML bars');
+
   // ── back to the list ────────────────────────────────────────────────────
   await page.locator('input.rb-name').fill('Digest + carrier totals');
   await page.getByRole('button', { name: 'Save', exact: true }).click();

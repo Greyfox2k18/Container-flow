@@ -171,7 +171,7 @@
 - Checked in both `container_create.php` and `ajax/container_update.php`
 
 ## Report Builder plugin (usersc/plugins/report_builder/, usersc/report_datasets/)
-Replaces the fixed-format reports with saved reports built from blocks. Being built in stages; stages 1–4 are in.
+Replaces the fixed-format reports with saved reports built from blocks. Stages 1–5 are in.
 - **Stage 1 — datasets + safe query builder** (no DB changes; existing reports untouched). Verified on live: "Check datasets" OK
   - UserSpice plugin layout (info.xml, install/activate/uninstall/delete/migrate, configure.php) — UserSpice 6.1.2; stage 1 installed on live Oct 7, 2026
   - `.gitignore` now ignores `usersc/plugins/*` EXCEPT `report_builder/` so the plugin is tracked
@@ -205,6 +205,16 @@ Replaces the fixed-format reports with saved reports built from blocks. Being bu
   - Preset `assets/presets/user_activity.json` — weekly (Mon 7 AM) to Administrators (perm 2): active users, signed in this week, login events, who signed in, activity by day and by type, CSVs attached. Project presets list first; same name overrides
   - Config `base_url` callable is now resolved only when a report renders (it was resolved whenever the config loaded — would have been a DB query per page once functions.php started reading config)
   - `README.md` — how to use the plugin on another project (config, datasets, page + AJAX wrappers, cron, presets); new logo; info.xml 0.4.0
+- **Stage 5 — built-in email settings + charts**
+  - Plugin settings page (Admin → Plugins → Report Builder → Settings; table `plg_rb_settings`, migration `00002`): email provider (SparkPost US/EU, Postmark, or UserSpice email), API key/token (stored, never shown back — only the last 4 characters), from/reply-to, site address, brand, header colour, permission levels for build / send / unrestricted reports, **Send test email**, and the cron line. A fresh UserSpice site needs only this + cron
+  - Built-in senders `assets/includes/rb_mail.php` (ported from `usersc/includes/sparkpost_email.php`; Postmark one message per recipient like ours). Inline chart images go to SparkPost/Postmark as `cid:` attachments; other senders get `data:` images
+  - `usersc/report_builder_config.php` still wins over the settings page. Container Flow now uses the built-in sender via `'mail'` → reads `email_provider`, `sparkpost_api_key`, `postmark_api_key`, `sparkpost_from_email/name` from `container_settings` (no re-entry). The old `'mailer'` closure around `sendSparkPostEmail()` is gone
+  - **Fix:** the config's `base_url` callable could run before `container_functions.php` was loaded (cron) and return '' → button links in emails came out relative. It now loads the file itself
+  - Settings form only changes fields that were posted (greyed-out config-file fields aren't posted and must not wipe saved values); multi-selects use a `*_present` marker
+  - Built-in editor page `usersc/plugins/report_builder/reports.php` + endpoint `api.php` (login + CSRF; RbApi does permissions). Default `editor_url`. Container Flow keeps `usersc/reports_builder.php`
+  - **Chart block** (`assets/includes/rb_chart.php`): column + line as GD PNGs (drawn 4×, saved 2×, DejaVu Sans bundled with its licence), bar as plain HTML table bars (works in Outlook). X axis + optional split-by (≤ 6 series, rest folded into Other for counts/sums) + one value; dates sorted and gaps filled across the whole date range; whole-number ticks for counts; HTML legend for ≥ 2 series; data table under the chart by default; alt text; CSV. Colours validated for colour-blind separation on white. Editor: chart type, X axis (+ day/week/month/year), value, split by, filters, date range, sort, height, table/CSV options
+  - Preset `usersc/report_presets/in_progress.json` ("in_progress_list" from the spec): daily 7 AM to supervisors, **each sees only their warehouses** (scope = recipient); tiles, bar chart by client, grouped list with Assigned, 30-day column chart inbound vs outbound
+  - Tests: 75 PHP (`run_tests.php`, incl. sender payloads via a stubbed transport, settings precedence, charts), `smoke_configure.php` (admin page), e2e incl. charts
 - **Switching the daily digest over** (when happy with the preview/test): activate the "Daily Digest" report, add the plugin cron line, remove the `cron/daily_digest.php` cron line. `ajax/trigger_digest.php` (settings page button) still uses the old code until then
 - **Finding:** the spec assumed `report_customers`, recipient `note`, `report_kind`, `layout_json` and client-digest functions already existed — they did not, and no reports had been made in the old builder, so nothing needed migrating. Live schema has no `completed_at`/`reviewed_at`; "completed" dates use `updated_at` like the digest
 

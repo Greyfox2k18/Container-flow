@@ -1,0 +1,48 @@
+{
+  "name": "In Progress",
+  "description": "Containers being worked on now, by client, with who they're assigned to. Each supervisor sees only their own warehouses.",
+  "schedule": { "frequency": "daily", "hour": 7 },
+  "scope_mode": "recipient",
+  "attach_csv": false,
+  "recipients": [
+    { "kind": "permission", "permission_id": 3, "note": "Supervisors" }
+  ],
+  "layout": {
+    "metrics": {
+      "in_progress": { "dataset": "containers", "fn": "count", "filters": [{ "field": "status", "op": "eq", "value": "in_progress" }] },
+      "pending":     { "dataset": "containers", "fn": "count", "filters": [{ "field": "status", "op": "eq", "value": "pending" }] },
+      "awaiting":    { "dataset": "containers", "fn": "count", "filters": [{ "field": "status", "op": "eq", "value": "completed" }] },
+      "clients":     { "dataset": "containers", "fn": "count_distinct", "field": "customer", "filters": [{ "field": "status", "op": "eq", "value": "in_progress" }] }
+    },
+    "subject": [
+      { "if": { "metric": "in_progress", "op": "gt", "value": 0 }, "text": "In progress: {in_progress} container{s:in_progress} for {clients} client{s:clients} — {date_short}" },
+      { "text": "In progress: nothing being worked on — {date_short}" }
+    ],
+    "blocks": [
+      { "type": "header", "eyebrow": "{brand}", "title": "In Progress", "subtitle": "{date}" },
+      { "type": "summary_tiles", "tiles": [
+          { "label": "In Progress", "metric": "in_progress", "color": "#1e3a5f" },
+          { "label": "Clients", "metric": "clients", "color": "#374151" },
+          { "label": "Pending", "metric": "pending", "color": "#6b7280" },
+          { "label": "Awaiting Review", "metric": "awaiting", "color": "#dc2626" }
+      ]},
+      { "type": "chart", "chart_type": "bar", "title": "In progress by client", "dataset": "containers", "hide_if_empty": true, "show_table": false, "csv": false,
+        "query": { "group_by": ["customer"], "aggregates": [{ "fn": "count" }], "filters": [{ "field": "status", "op": "eq", "value": "in_progress" }] } },
+      { "type": "grouped_table", "title": "Containers", "dataset": "containers", "group_field": "customer",
+        "query": { "fields": ["container_number", "type", "warehouse", "assigned_to_name", "carrier", "updated_at"],
+                   "filters": [{ "field": "status", "op": "eq", "value": "in_progress" }],
+                   "sort": [{ "key": "updated_at", "dir": "asc" }] },
+        "labels": { "container_number": "Container", "assigned_to_name": "Assigned", "updated_at": "Last Updated" },
+        "empty_text": "Nothing in progress right now." },
+      { "type": "chart", "chart_type": "column", "title": "New containers — last 30 days", "dataset": "containers", "height": 200, "show_table": false,
+        "query": { "group_by": [{ "field": "created_at", "bucket": "day" }, "type"], "aggregates": [{ "fn": "count" }],
+                   "date_window": { "field": "created_at", "range": "last_30_days" } },
+        "labels": { "created_at__day": "Day" } },
+      { "type": "buttons", "buttons": [
+          { "label": "Open Dashboard", "url": "usersc/container_dashboard.php", "style": "primary" },
+          { "label": "Advanced View", "url": "usersc/container_dashboard_pro.php", "style": "secondary" }
+      ]},
+      { "type": "text", "style": "footer", "body": "Automated report from {brand}" }
+    ]
+  }
+}

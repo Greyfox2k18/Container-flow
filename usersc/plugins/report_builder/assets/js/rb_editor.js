@@ -101,6 +101,7 @@
     ['summary_tiles', 'Summary tiles', 'Big numbers from metrics'],
     ['table', 'Table', 'List rows, or totals by group'],
     ['grouped_table', 'Grouped table', 'One section per client, status…'],
+    ['chart', 'Chart', 'Bar, column or line chart'],
     ['text', 'Text', 'Paragraph, callout or footer'],
     ['buttons', 'Buttons', 'Links back to the site'],
   ];
@@ -195,6 +196,13 @@
       case 'grouped_table':
         var g = d.fields.filter(function (f) { return f.groupable; })[0];
         b = { type: 'grouped_table', title: '', dataset: d.key, group_field: g ? g.key : '', query: { fields: d.default_fields.filter(function (k) { return !g || k !== g.key; }) } };
+        break;
+      case 'chart':
+        b = { type: 'chart', chart_type: 'column', title: '', dataset: d.key, show_table: true,
+              query: { group_by: d.default_date_field ? [{ field: d.default_date_field, bucket: 'day' }] : [], aggregates: [{ fn: 'count' }],
+                       date_window: d.default_date_field ? { range: 'last_30_days' } : undefined } };
+        if (!b.query.group_by.length) { var gf = d.fields.filter(function (f) { return f.groupable; })[0]; if (gf) b.query.group_by = [{ field: gf.key }]; }
+        if (!b.query.date_window) delete b.query.date_window;
         break;
       case 'text': b = { type: 'text', style: 'normal', body: '' }; break;
       case 'buttons': b = { type: 'buttons', buttons: [{ label: 'Open dashboard', url: '', style: 'primary' }] }; break;
@@ -380,6 +388,10 @@
       case 'text': return (b.style && b.style !== 'normal' ? '[' + b.style + '] ' : '') + (b.body || '').slice(0, 40);
       case 'summary_tiles': return (b.tiles || []).map(function (t) { return t.label; }).join(' · ');
       case 'buttons': return (b.buttons || []).map(function (x) { return x.label; }).join(' · ');
+      case 'chart':
+        var cg = (b.query && b.query.group_by) || [];
+        var cx = cg[0] && field(b.dataset, typeof cg[0] === 'string' ? cg[0] : cg[0].field);
+        return (b.title ? b.title + ' — ' : '') + (b.chart_type || 'column') + (cx ? ' by ' + cx.label : '');
       case 'table': case 'grouped_table':
         var d = ds(b.dataset);
         return (b.title || '') + (d ? ' — ' + d.label : '') + (b.type === 'grouped_table' && b.group_field ? ' by ' + ((field(b.dataset, b.group_field) || {}).label || b.group_field) : '');
@@ -404,6 +416,7 @@
       case 'buttons': return buttonsEditor(b);
       case 'summary_tiles': return tilesEditor(b);
       case 'table': case 'grouped_table': return tableEditor(b);
+      case 'chart': return chartEditor(b);
     }
     return null;
   }
@@ -520,6 +533,64 @@
       row('Max rows', inp(q.limit || '', function (v) { if (v === '') delete q.limit; else q.limit = +v; changed(); }, { type: 'number', min: 1, max: 10000, placeholder: '5000', class: 'rb-input rb-narrow' })),
       chk('Hide this block when there are no rows', b.hide_if_empty, function (v) { b.hide_if_empty = v; changed(true); }),
       b.hide_if_empty ? null : row('Text when empty', inp(b.empty_text, function (v) { b.empty_text = v; changed(); }, { placeholder: 'Nothing to show.' })),
+      chk('Include in the CSV attachment', b.csv !== false, function (v) { if (v) delete b.csv; else b.csv = false; changed(); })]));
+    return out;
+  }
+
+  // Chart ─────────────────────────────────────────────────────────────────────
+
+  function chartEditor(b) {
+    b.query = b.query || {};
+    var q = b.query;
+    q.group_by = (q.group_by || []).map(function (g) { return typeof g === 'string' ? { field: g } : g; });
+    q.aggregates = q.aggregates && q.aggregates.length ? q.aggregates.slice(0, 1) : [{ fn: 'count' }];
+    var a = q.aggregates[0];
+    var groupable = function (f) { return f.groupable; };
+    var x = q.group_by[0] || (q.group_by[0] = { field: (fieldOpts(b.dataset, groupable)[0] || [''])[0] });
+    var xf = field(b.dataset, x.field);
+    var split = q.group_by[1] || null;
+    var out = [];
+
+    out.push(row('Heading', inp(b.title, function (v) { b.title = v; changed(); }, { placeholder: 'Optional' })));
+    out.push(row('Chart', sel([['column', 'Column (vertical bars)'], ['line', 'Line (trend over time)'], ['bar', 'Bar (horizontal, ranked)']], b.chart_type || 'column', function (v) {
+      b.chart_type = v;
+      if (v === 'bar') q.group_by = q.group_by.slice(0, 1);
+      changed(true);
+    })));
+    out.push(row('Data', sel(META.datasets.map(function (d) { return [d.key, d.label]; }), b.dataset, function (v) {
+      var d = ds(v), g = d && d.fields.filter(groupable)[0];
+      b.dataset = v; b.labels = {};
+      b.query = { group_by: g ? [{ field: g.key }] : [], aggregates: [{ fn: 'count' }] };
+      changed(true);
+    })));
+    if (!ds(b.dataset)) return out.concat(h('div', { class: 'rb-alert' }, 'This dataset is no longer registered.'));
+
+    out.push(row('Across the bottom (X axis)', h('div', { class: 'rb-inline' },
+      sel(fieldOpts(b.dataset, groupable), x.field, function (v) { x.field = v; delete x.bucket; if (isDate(field(b.dataset, v))) x.bucket = 'day'; q.sort = []; changed(true); }, { 'aria-label': 'X axis field' }),
+      isDate(xf) ? sel([['day', 'By day'], ['week', 'By week'], ['month', 'By month'], ['year', 'By year'], ['', 'Exact value']], x.bucket || '', function (v) { if (v) x.bucket = v; else delete x.bucket; q.sort = []; changed(true); }, { 'aria-label': 'Group dates' }) : null)));
+
+    out.push(row('Value', h('div', { class: 'rb-inline' },
+      sel(META.aggregates.map(function (fn) { return [fn, AGG_LABEL[fn] || fn]; }), a.fn, function (v) {
+        a.fn = v; if (v === 'count') delete a.field; else if (!a.field) { var af = aggFields(b.dataset, v)[0]; a.field = af && af[0]; }
+        q.sort = []; changed(true);
+      }, { 'aria-label': 'Value' }),
+      a.fn === 'count' ? null : sel(aggFields(b.dataset, a.fn), a.field, function (v) { a.field = v; q.sort = []; changed(true); }, { 'aria-label': 'Value field' }))));
+
+    if (b.chart_type !== 'bar') {
+      out.push(row('Split into lines/colours by', sel([['', '— nothing (one series) —']].concat(fieldOpts(b.dataset, function (f) { return f.groupable && f.key !== x.field; })), split ? split.field : '', function (v) {
+        if (v) q.group_by[1] = { field: v }; else q.group_by = q.group_by.slice(0, 1);
+        changed(true);
+      }, { 'aria-label': 'Split by' })));
+      if (split) out.push(h('div', { class: 'rb-hint' }, 'Up to 6 series are drawn; smaller ones are grouped as "Other".'));
+    }
+
+    out.push(section('Filters', filterList(b.dataset, q.filters || (q.filters = []))));
+    out.push(section('Date range', dateWindowEditor(b.dataset, q)));
+    out.push(section('Sort', [h('div', { class: 'rb-hint' }, isDate(xf) ? 'Dates run left to right automatically.' : 'Default: biggest first.'), sortEditor(b, true)]));
+    out.push(section('Options', [
+      b.chart_type === 'bar' ? null : row('Height', sel([[200, 'Short'], [280, 'Medium'], [360, 'Tall']], b.height || 280, function (v) { b.height = +v; changed(); })),
+      chk('Show the numbers in a table under the chart', b.show_table !== false, function (v) { b.show_table = v; changed(); }),
+      chk('Hide this block when there is no data', b.hide_if_empty, function (v) { b.hide_if_empty = v; changed(true); }),
       chk('Include in the CSV attachment', b.csv !== false, function (v) { if (v) delete b.csv; else b.csv = false; changed(); })]));
     return out;
   }
