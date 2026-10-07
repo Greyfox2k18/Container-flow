@@ -252,7 +252,7 @@ class RbReports {
         }
 
         $mailer = self::config()['mailer'] ?: [__CLASS__, 'userspiceMailer'];
-        $ok = true; $errors = []; $rows = 0; $sent = 0;
+        $ok = true; $errors = []; $replies = []; $rows = 0; $sent = 0;
         foreach ($groups as $viewer => $people) {
             try {
                 $out = self::render($report, self::scopeCtx($report, $viewer === '' ? null : (int) $viewer), ['now' => $now]);
@@ -271,13 +271,15 @@ class RbReports {
             }
             if (!empty($res['success'])) {
                 $sent += count($people);
+                if (!empty($res['message'])) $replies[] = $res['message'];
             } else {
                 $ok = false;
                 $errors[] = $res['message'] ?? 'Mailer failed';
             }
         }
 
-        $msg = $ok ? "Sent to $sent recipient(s)." : implode('; ', array_unique($errors));
+        $msg = $ok ? "Sent to $sent recipient(s)" . ($replies ? ' — ' . implode('; ', array_unique($replies)) : '') . '.'
+                   : implode('; ', array_unique($errors));
         self::log($report->id, $trigger, $sent, $rows, $ok, $ok ? null : $msg);
         if ($ok && $trigger !== 'test') {
             DB::getInstance()->update(self::T_REPORTS, (int) $report->id, ['last_sent_at' => $now->format('Y-m-d H:i:s')]);
