@@ -31,7 +31,7 @@ usersc/includes/sparkpost_email.php.bak
 vendor/
 composer.json
 composer.lock
-README.md
+/README.md
 SECURITY.md
 favicon.ico
 index.php
