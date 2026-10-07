@@ -45,6 +45,15 @@ crontab -e
 0 6 * * * php /var/www/container-flow.com/html/usersc/cron/daily_digest.php >> /var/www/container-flow.com/html/usersc/logs/daily_digest.log 2>&1
 ```
 
+### 6b. Yard Board (door & yard tracking)
+No SQL to run — the yard tables are created automatically the first time anyone opens `yard_board.php`.
+1. In UserSpice admin, add `yard_board.php`, `yard_history.php` and `yard_settings.php` as pages (floor workers + supervisors for the first two, supervisors for settings).
+2. As a supervisor open **Yard Board → Setup**:
+   - **Import the T-Card sheet**: in Google Sheets open the TODAY tab → File → Download → CSV, upload, check the preview, click *Import now*. Doors/yard spots are created from the sheet automatically.
+   - Or add doors/spots by range (DR 1–14, F 1–47).
+   - Pick account colours (matched to Container Flow clients by name).
+3. Share `https://container-flow.com/usersc/yard_board.php` with the yard team. Every open board updates within ~8 seconds of any change.
+
 ### 7. UserSpice page permissions
 In UserSpice admin, configure which user groups can access each page. Typically:
 - Supervisors: all pages
@@ -64,6 +73,9 @@ In UserSpice admin, configure which user groups can access each page. Typically:
 | `container_client_users.php` | Link UserSpice users to customers for portal access |
 | `customer_photo_types.php` | Configure per-client photo requirements |
 | `cron/daily_digest.php` | Daily summary email to supervisors |
+| `yard_board.php` | Live door/yard board (replaces the T-Card sheet) |
+| `yard_history.php` | Picked-up log + move/activity log, CSV export |
+| `yard_settings.php` | Doors/yard spots, account colours, sheet import |
 
 ## UserSpice permission IDs (in this install)
 - Supervisor = 3 (fetchPermissionUsers(3))

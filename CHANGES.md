@@ -170,6 +170,19 @@
 - New `customers.use_shipment_number_as_id` flag — flagged clients get checked on `shipment_number` instead of `container_number`, via `getIdentifierField($customer_id)`
 - Checked in both `container_create.php` and `ajax/container_update.php`
 
+## Yard Board (usersc/yard_board.php, yard_history.php, yard_settings.php, includes/yard_functions.php)
+- Live replacement for the Kent T-Card Google Sheet: doors (DR01–DR14) and yard spots (F01–F47) as cards, polled every 8s via `ajax/yard_data.php` (returns `{unchanged:true}` when the board version hasn't moved, full payload every ~2 min so Container Flow status changes show too)
+- All writes go through `ajax/yard_action.php` (save / move / pickup / restore / check / delete)
+- Tables `yard_locations`, `yard_units`, `yard_events` + `customers.yard_color` are created on demand by `ensureYardTables()` — same self-migrating pattern as the SKU scan tool. DDL also in `13_yard_migration.sql`
+- One container per spot is enforced by `UNIQUE KEY uk_location (location_id)`; swaps park the occupant at NULL first
+- Edits carry `version` (= `updated_at`) and are rejected if someone else changed the card in between
+- Auto-dates on live edits only: Date In when placed, MT Date on → Empty, LD Date on → Loaded — never overwrites a typed date, disabled during CSV import
+- Yard check ticks set `checked_at` without touching `updated_at` (so they don't look like edits) and log a `checked` event so other boards refresh
+- Linked to Container Flow by container number (`container_id`, with a fallback lookup for records created later). `container_view.php` shows a yard-location badge; card editor links to the photo record or to `container_create.php` pre-filled
+- Delete: anyone for Incoming entries, supervisors only once a container has been on site (use Picked up instead)
+- CSV import of the sheet's TODAY tab (preview first, never overwrites an occupied spot, idempotent)
+- Links added: Yard Board button on `container_dashboard.php` (desktop + mobile), nav entry in `includes/container_navigation.php`
+
 ## Still outstanding
 - `container_edit.php` was never uploaded this session — warehouse picker, identifier validation, and missing-photos alert are NOT wired into it if it's a separate page from the Pro dashboard modal
 - Missing-photos alert action was requested for `container_view.php`'s existing Actions button — not yet done, file not uploaded

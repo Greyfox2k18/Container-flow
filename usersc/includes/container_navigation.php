@@ -9,3 +9,8 @@
         <i class="fa fa-cubes fa-fw"></i> Containers
     </a>
 </li>
+<li class="nav-item">
+    <a class="nav-link" href="<?=$us_url_root?>usersc/yard_board.php">
+        <i class="fa fa-th fa-fw"></i> Yard Board
+    </a>
+</li>

@@ -3,6 +3,7 @@ require_once '../users/init.php';
 require_once $abs_us_root.$us_url_root.'users/includes/template/prep.php';
 require_once $abs_us_root.$us_url_root.'usersc/includes/container_functions.php';
 require_once $abs_us_root.$us_url_root.'usersc/includes/sku_scan_functions.php';
+require_once $abs_us_root.$us_url_root.'usersc/includes/yard_functions.php';
 
 if (!securePage($_SERVER['PHP_SELF'])) {
     die();
@@ -49,6 +50,10 @@ try {
 } catch (\Throwable $e) {
     $scan_summary = null;
 }
+
+// Where this container is sitting in the yard right now (Yard Board), if
+// anywhere. Fails soft to null if the yard tables aren't set up.
+$yard_unit = getYardUnitForContainer($container);
 
 // Get activity log
 $activity_log = $db->query("SELECT al.*, u.fname, u.lname FROM container_activity_log al 
@@ -104,6 +109,14 @@ $csrf = Token::generate();
                                 <span class="label label-<?php echo $status_class[$container->status]; ?> label-lg" id="statusBadge">
                                     <?php echo ucwords(str_replace('_', ' ', $container->status)); ?>
                                 </span>
+                                <?php if ($yard_unit): ?>
+                                <a href="yard_board.php<?php echo $yard_unit->warehouse_id ? '?warehouse_id=' . (int) $yard_unit->warehouse_id : ''; ?>"
+                                   class="label label-default label-lg" style="background:#111827;color:#fff;text-decoration:none;"
+                                   title="Yard Board · <?php echo htmlspecialchars($yard_unit->status); ?>">
+                                    <i class="fa fa-map-marker"></i>
+                                    <?php echo htmlspecialchars($yard_unit->location_code ?: 'Incoming'); ?> · <?php echo htmlspecialchars($yard_unit->status); ?>
+                                </a>
+                                <?php endif; ?>
                             </div>
                         </div>
 

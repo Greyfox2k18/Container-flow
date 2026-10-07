@@ -365,6 +365,8 @@ $csrf = Token::generate();
                         <?php endif; ?>
                     </span>
                     <?php endif; ?>
+                    <a href="yard_board.php" class="btn btn-default"><i class="fa fa-th"></i> Yard Board
+                    </a>
                     <a href="container_dashboard_pro.php" class="btn btn-default"><i class="fa fa-table"></i> Advanced View
                     </a>
                     <a href="container_reports.php" class="btn btn-default"><i class="fa fa-bar-chart"></i> Reports
@@ -505,6 +507,9 @@ $csrf = Token::generate();
         <div class="mobile-dashboard">
             <!-- Mobile Header -->
             <div class="mobile-header">
+                <a href="yard_board.php" class="btn btn-default btn-sm" style="margin-top: 8px;">
+                    <i class="fa fa-th"></i> Yard Board
+                </a>
                                 <?php if ($is_supervisor): ?>
                 <a href="customer_list.php" class="btn btn-default btn-sm" style="margin-top: 8px;">
                     <i class="fa fa-address-book"></i> Manage Clients
