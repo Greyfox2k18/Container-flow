@@ -180,7 +180,8 @@
 - Edits are logged per save with sheet column names (`DRIVER: (blank) → SISI`); a container # change is its own `renamed` event, and its stays follow the new number
 - Board: ◷ on each row (or LOC in the incoming block) opens the history panel: gate in/out, time on site, every door/yard stay with in/out times and who, and every change. Hovering the DR cell shows when the container went into that spot; hovering DATE IN shows the gate-in time
 - `yard_history.php?view=inout`: door (or all spot) in/out times with time there, CSV export; Picked Up view gains Gate in + time on site
-- - HOT is derived from the text: "HOT" in DRIVER, DC NOTES or the incoming STATUS
+- - **Inbound / outbound** (`yard_units.direction`, default inbound): an IN/OUT toggle on each row (the narrow column between DC NOTES and the incoming block). Outbound rows fill with the client's colour; inbound rows colour only CONTAINER and ACCOUNT. Changes are logged ("IN/OUT: IN → OUT"). The CSV import guesses outbound from OUTBOUND / PRELOAD / UL- numbers in DRIVER or DC NOTES, since the sheet only marks it with colour
+- HOT is derived from the text: "HOT" in DRIVER, DC NOTES or the incoming STATUS
 - Dates typed without a year (10/9) pick the year nearest today
 - Live replacement for the Kent T-Card Google Sheet: doors (DR01–DR14) and yard spots (F01–F47), polled every 5s via `ajax/yard_data.php` (returns `{unchanged:true}` when the board version hasn't moved, full payload every ~2 min so Container Flow status changes show too)
 - All writes go through `ajax/yard_action.php` (save / move / pickup / restore / check / delete)

@@ -87,15 +87,21 @@ table.ys { border-collapse:separate; border-spacing:0; font-size:13.3px; font-we
 .ys tr.idrop td.inc { box-shadow:inset 0 2px 0 var(--sel), inset 0 -2px 0 var(--sel); }
 .ys tr.flash td:not(.dr):not(.gap) { animation:ysFlash 1.8s ease-out; }
 @keyframes ysFlash { 0% { background-color:#fde293; } }
-.ys td.act { width:48px; }
+.ys td.act { width:84px; }
+.ys .dirbtn { font:inherit; font-size:10.5px; font-weight:700; letter-spacing:.03em; width:34px; height:17px; margin:2px 2px 0; padding:0; border:1px solid #c0c0c0;
+  border-radius:3px; background:#fff; color:#3c4043; cursor:pointer; visibility:hidden; flex:none; }
+.ys .dirbtn.out { background:#3c4043; border-color:#3c4043; color:#fff; }
+.ys .dirbtn:hover { border-color:var(--sel); }
+.ys .dirbtn:focus-visible { outline:2px solid var(--sel); outline-offset:1px; }
+.ys tr.has .dirbtn { visibility:visible; }
 .ys .acts { display:flex; height:21px; }
 .ys .actbtn { border:0; background:none; cursor:pointer; color:#80868b; font:inherit; font-size:13px; flex:1; height:21px; padding:0; visibility:hidden; }
 .ys tr.has:hover .actbtn, .ys .actbtn:focus { visibility:visible; }
 .ys .actbtn.pick:hover { color:#d93025; }
 .ys .actbtn.hist:hover { color:#1a73e8; }
 .ys td.c-loc { cursor:pointer; }
-.ys-sheet.checking .ys .acts { display:none; }
-.ys .chk { display:none; width:15px; height:15px; margin:3px auto; cursor:pointer; }
+.ys-sheet.checking .ys .actbtn { display:none; }
+.ys .chk { display:none; width:15px; height:15px; margin:3px auto; cursor:pointer; flex:1; }
 .ys-sheet.checking .ys tr.has .chk { display:block; }
 .ys-moving { display:none; position:sticky; top:0; z-index:5; background:#e8f0fe; border:1px solid var(--sel); color:#174ea6; padding:6px 10px; font-size:13px; margin-bottom:6px; border-radius:4px; }
 .ys-moving.show { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
@@ -181,14 +187,14 @@ table.ys { border-collapse:separate; border-spacing:0; font-size:13.3px; font-we
             <colgroup>
                 <col style="width:52px"><col style="width:132px"><col style="width:84px"><col style="width:62px"><col style="width:66px"><col style="width:64px">
                 <col style="width:190px"><col style="width:140px"><col style="width:50px"><col style="width:88px"><col style="width:160px">
-                <col style="width:48px">
+                <col style="width:84px">
                 <col style="width:132px"><col style="width:132px"><col style="width:190px"><col style="width:50px"><col style="width:52px">
             </colgroup>
             <thead>
                 <tr>
                     <th class="dr">DR</th><th>CONTAINER</th><th>STATUS</th><th>DATE IN</th><th>MT DATE</th><th>LD DATE</th>
                     <th>DRIVER</th><th>ACCOUNT</th><th>LFD</th><th>Drayman</th><th>DC NOTES</th>
-                    <th class="gap" title="History / picked up / yard check"></th>
+                    <th class="gap" title="Inbound / outbound, history, picked up">IN/OUT</th>
                     <th class="inc">Container</th><th class="inc">Customer</th><th class="inc">STATUS</th><th class="inc">ETA</th><th class="inc">LOC</th>
                 </tr>
             </thead>
@@ -200,6 +206,7 @@ table.ys { border-collapse:separate; border-spacing:0; font-size:13.3px; font-we
         Type a container number into an empty row to put it there, or into the blue Container column to add one that's on the way.
         Grab the <b>⠿</b> grip next to a container number to drag it to another row (drop it on an occupied row to swap).
         On a phone, tap the grip, then tap the DR cell of the row to move it to. Clear a CONTAINER cell, or use ⇥, when a container is picked up.
+        IN / OUT on each row marks inbound or outbound: outbound rows fill with the client's colour, inbound rows colour only CONTAINER and ACCOUNT.
         Every change is recorded with who and when: use ◷ on a row (or click LOC in the incoming block) to see a container's gate in/out and door in/out times.
     </p>
 </div>
@@ -328,9 +335,10 @@ table.ys { border-collapse:separate; border-spacing:0; font-size:13.3px; font-we
                 '<td class="dr">' + (loc ? esc(loc.code) : '') + '</td>' +
                 (loc ? LEFT.map(function (c) { return cellHtml(c, 'L'); }).join('')
                      : LEFT.map(function () { return '<td></td>'; }).join('')) +
-                '<td class="gap act">' + (loc ? '<span class="acts"><button type="button" class="actbtn hist" title="History: in/out times and changes" aria-label="History">&#9719;</button>' +
-                    '<button type="button" class="actbtn pick" title="Picked up" aria-label="Picked up">&#8677;</button></span>' +
-                    '<input type="checkbox" class="chk" title="Seen in yard check" aria-label="Seen">' : '') + '</td>' +
+                '<td class="gap act">' + (loc ? '<span class="acts"><button type="button" class="dirbtn" title="Inbound or outbound. Click to switch.">IN</button>' +
+                    '<button type="button" class="actbtn hist" title="History: in/out times and changes" aria-label="History">&#9719;</button>' +
+                    '<button type="button" class="actbtn pick" title="Picked up" aria-label="Picked up">&#8677;</button>' +
+                    '<input type="checkbox" class="chk" title="Seen in yard check" aria-label="Seen"></span>' : '') + '</td>' +
                 RIGHT.map(function (c) { return cellHtml(c, 'R'); }).join('') +
                 '<td class="inc c-loc"></td></tr>');
         }
@@ -384,7 +392,9 @@ table.ys { border-collapse:separate; border-spacing:0; font-size:13.3px; font-we
                 var v = c.input === 'client' ? clientVal(el, u) : u ? (c.input === 'date' ? md(u[c.f]) : (u[c.f] || '')) : '';
                 setVal(el, v);
                 if (c.f !== 'container_number') el.disabled = !u;
-                td.style.background = (u && !c.plain && u.account) ? u.color : '';
+                // Outbound: the account colour fills the row. Inbound: only CONTAINER and ACCOUNT.
+                var tint = u && u.account && (u.direction === 'outbound' ? !c.plain : (c.f === 'container_number' || c.f === 'customer_id'));
+                td.style.background = tint ? u.color : '';
                 td.classList.toggle('hot', !!(u && u.hot && (c.f === 'container_number' || c.f === 'driver')));
                 td.classList.toggle('late', !!(u && c.f === 'lfd' && u.lfd_state === 'overdue'));
                 td.classList.toggle('soon', !!(u && c.f === 'lfd' && u.lfd_state === 'soon'));
@@ -404,6 +414,13 @@ table.ys { border-collapse:separate; border-spacing:0; font-size:13.3px; font-we
                 : loc.code;
             var dateInTd = tr.children[3];
             dateInTd.title = u && u.arrived_at ? 'Gate in ' + stamp(u.arrived_at) : '';
+            var dir = tr.querySelector('.dirbtn');
+            if (dir) {
+                var out = !!(u && u.direction === 'outbound');
+                dir.textContent = out ? 'OUT' : 'IN';
+                dir.classList.toggle('out', out);
+                dir.setAttribute('aria-label', u ? u.container_number + ' is ' + (out ? 'outbound' : 'inbound') + '. Switch to ' + (out ? 'inbound' : 'outbound') : 'Inbound or outbound');
+            }
             var chk = tr.querySelector('.chk');
             if (chk) chk.checked = !!(u && u.checked_today);
         }
@@ -474,6 +491,8 @@ table.ys { border-collapse:separate; border-spacing:0; font-size:13.3px; font-we
         var checked = state.units.filter(function (u) { return u.checked_today; }).length;
         $('ysCounts').textContent = 'Doors ' + doorsUsed + '/' + doors + ' · Yard ' + yardUsed + '/' + yard +
             ' · Incoming ' + state.incoming.filter(function (u) { return !u.location_id; }).length +
+            ' · In ' + state.units.filter(function (u) { return u.direction !== 'outbound'; }).length +
+            ' / Out ' + state.units.filter(function (u) { return u.direction === 'outbound'; }).length +
             (checking ? ' · Checked ' + checked + '/' + state.units.length : '');
         var dray = {};
         state.units.concat(state.incoming).forEach(function (u) { if (u.drayman) dray[u.drayman.toUpperCase()] = 1; });
@@ -576,6 +595,18 @@ table.ys { border-collapse:separate; border-spacing:0; font-size:13.3px; font-we
         }
     });
     $('ysBody').addEventListener('click', function (e) {
+        var dirBtn = e.target.closest('.dirbtn');
+        if (dirBtn) {
+            var du = byId(dirBtn.closest('tr').dataset.unit);
+            if (!du) return;
+            var next = du.direction === 'outbound' ? 'inbound' : 'outbound';
+            dirBtn.textContent = next === 'outbound' ? 'OUT' : 'IN';
+            dirBtn.classList.toggle('out', next === 'outbound');
+            post({ action: 'save', unit_id: du.id, direction: next }).then(function (r) {
+                afterWrite(r, r.success ? du.container_number + ' is ' + next : null);
+            });
+            return;
+        }
         var hist = e.target.closest('.actbtn.hist');
         if (hist) { openHistory(hist.closest('tr').dataset.unit); return; }
         var locCell = e.target.closest('td.c-loc');

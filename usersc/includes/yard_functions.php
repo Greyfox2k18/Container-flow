@@ -140,6 +140,8 @@ function ensureYardTables() {
 
     // ACCOUNT = a Container Flow client; the board colour lives on the client.
     yardAddColumnIfMissing('yard_units', 'customer_id', 'INT NULL');
+    // Inbound rows colour only CONTAINER + ACCOUNT; outbound rows colour the whole row.
+    yardAddColumnIfMissing('yard_units', 'direction', "VARCHAR(8) NOT NULL DEFAULT 'inbound'");
     yardAddColumnIfMissing('customers', 'yard_color', 'VARCHAR(7) NULL');    // Incoming list (right-hand block of the sheet). A container stays on it
     // after it arrives, with LOC showing where it went, until someone clears it.
     yardAddColumnIfMissing('yard_units', 'on_list', 'TINYINT(1) NOT NULL DEFAULT 0');
@@ -418,6 +420,9 @@ function yardCleanFields(array $input) {
         if (array_key_exists($f, $input)) $data[$f] = yardParseDate($input[$f]);
     }
     if (array_key_exists('on_list', $input)) $data['on_list'] = $input['on_list'] ? 1 : 0;
+    if (array_key_exists('direction', $input)) {
+        $data['direction'] = $input['direction'] === 'outbound' ? 'outbound' : 'inbound';
+    }
     // ACCOUNT: pick a client by id (the board's dropdown) or by name (import).
     // The client's name is copied to `account` so history reads well; a name
     // that isn't a client (from an old sheet) is kept as plain text.
@@ -534,7 +539,7 @@ function yardFieldLabel($field) {
     return [
         'status' => 'STATUS', 'date_in' => 'DATE IN', 'mt_date' => 'MT DATE', 'ld_date' => 'LD DATE',
         'driver' => 'DRIVER', 'account' => 'ACCOUNT', 'lfd' => 'LFD', 'drayman' => 'Drayman', 'notes' => 'DC NOTES',
-        'eta' => 'ETA', 'list_note' => 'Incoming STATUS', 'on_list' => 'On incoming list',
+        'eta' => 'ETA', 'list_note' => 'Incoming STATUS', 'on_list' => 'On incoming list', 'direction' => 'IN/OUT',
     ][$field] ?? $field;
 }
 
@@ -542,6 +547,7 @@ function yardShowValue($field, $value) {
     if ($value === null || $value === '') return '(blank)';
     if (in_array($field, ['date_in', 'mt_date', 'ld_date', 'lfd', 'eta'], true)) return date('n/j', strtotime($value));
     if ($field === 'on_list') return $value ? 'yes' : 'no';
+    if ($field === 'direction') return $value === 'outbound' ? 'OUT' : 'IN';
     return (string) $value;
 }
 
@@ -592,6 +598,16 @@ function moveYardUnit($unit, $to_location_id, $user_id, $swap = false) {
     yardOpenStint(getYardUnitById($unit->id), $to, $user_id);
     logYardEvent($unit, $user_id, $occupant ? 'swapped' : ($placing ? 'placed' : 'moved'), $from_code ?: 'INCOMING', $to->code);
     return null;
+}
+
+/**
+ * The sheet marks outbound rows only by colour, which a CSV doesn't carry.
+ * Best guess from the text: outbound loads, preloads and UL- BOL numbers.
+ * Anything else imports as inbound and can be flipped with the IN/OUT toggle.
+ */
+function yardGuessDirection(array $fields) {
+    $text = strtoupper(($fields['driver'] ?? '') . ' ' . ($fields['notes'] ?? ''));
+    return preg_match('/OUTBOUND|PRELOAD|\bUL-?\d/', $text) ? 'outbound' : 'inbound';
 }
 
 /**
@@ -709,6 +725,7 @@ function yardUnitToArray($u, $names, $today) {
         'hot'              => (bool) $u->hot,
         'account'          => $account,
         'customer_id'      => $u->customer_id ? (int) $u->customer_id : null,
+        'direction'        => $u->direction === 'outbound' ? 'outbound' : 'inbound',
         'color'            => $u->account_color ?: yardFallbackColor($account),
         'driver'           => $u->driver,
         'drayman'          => $u->drayman,
@@ -938,6 +955,7 @@ function importYardCsv($path, $warehouse_id, $user_id, $dry_run = true) {
         $on_board[$number] = true;
         $status = ucfirst(strtolower($fields['status']));
         $fields['status'] = in_array($status, YARD_STATUSES, true) && $status !== 'Expected' ? $status : 'Full';
+        $fields['direction'] = yardGuessDirection($fields);
 
         $occupant = $loc ? getYardUnitAtLocation($loc->id) : null;
         if ($occupant && $occupant->container_number === $number) continue; // already on the board
@@ -956,7 +974,7 @@ function importYardCsv($path, $warehouse_id, $user_id, $dry_run = true) {
             continue;
         }
         $report['placed']++;
-        $report['lines'][] = "{$code} ← {$number} ({$data['status']})" . ($existing ? ' — from Incoming' : '');
+        $report['lines'][] = "{$code} ← {$number} ({$data['status']}, " . ($data['direction'] === 'outbound' ? 'OUT' : 'IN') . ')' . ($existing ? ' — from Incoming' : '');
         if ($dry_run) continue;
         if ($existing) {
             $existing = updateYardUnit($existing, $data, $user_id);

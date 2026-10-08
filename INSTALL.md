@@ -53,6 +53,7 @@ No SQL to run — the yard tables are created automatically the first time anyon
 2. As a supervisor open **Yard Board → Setup**:
    - **Import the T-Card sheet**: in Google Sheets open the TODAY tab → File → Download → CSV, upload, check the preview, click *Import now*. Doors/yard spots are created from the sheet automatically.
    - Or add doors/spots by range (DR 1–14, F 1–47).
+   - After importing, check the IN/OUT toggle on each row: the import marks preloads, outbounds and UL- loads as OUT and everything else IN (the sheet only showed this with colour). Outbound rows fill with the client's colour; inbound rows colour only CONTAINER and ACCOUNT.
    - Set client colours (Setup → Client colours). Add any missing clients under Manage Clients first; the import preview lists sheet accounts that aren't clients yet.
 3. Share `https://container-flow.com/usersc/yard_board.php` with the yard team. Every open board updates within ~5 seconds of any change. The site menu (`includes/container_navigation.php`) has separate Containers and Yard Board entries.
 

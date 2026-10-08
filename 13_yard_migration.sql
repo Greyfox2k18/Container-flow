@@ -65,6 +65,8 @@ CREATE TABLE IF NOT EXISTS yard_events (
 
 -- ACCOUNT = a Container Flow client; each client can have a board colour.
 ALTER TABLE yard_units ADD COLUMN customer_id INT NULL;
+-- Inbound rows colour only CONTAINER + ACCOUNT; outbound rows colour the whole row.
+ALTER TABLE yard_units ADD COLUMN direction VARCHAR(8) NOT NULL DEFAULT 'inbound';
 ALTER TABLE customers ADD COLUMN yard_color VARCHAR(7) NULL;
 
 -- One row per stay at a door or yard spot: door/yard in and out times.
