@@ -1,12 +1,16 @@
 <?php
 /**
  * Yard Board writes. POST action=
- *   save     unit_id (0 = new), card fields, location_id (new only), version
+ *   save     unit_id (0 = new), cell fields, location_id (new only), version (optional)
+ *            New + location_id whose number is waiting on the Incoming list
+ *            places that container instead of creating a second one.
  *   move     unit_id, location_id (0 = back to Incoming), swap=1 to trade places
  *   pickup   unit_id            — leaves the yard, goes to history
  *   restore  unit_id            — undo a pickup
  *   check    unit_id            — yard check: "it's really there"
  *   delete   unit_id            — anyone for Incoming entries, supervisors otherwise
+ *   unlist   unit_id            — clear it from the Incoming list (deletes it if
+ *                                 it never arrived)
  */
 ob_start();
 error_reporting(E_ALL);
@@ -44,7 +48,7 @@ try {
     switch ($action) {
         case 'save':
             $fields = [];
-            foreach (['container_number', 'status', 'account', 'driver', 'drayman', 'notes', 'date_in', 'mt_date', 'ld_date', 'lfd', 'eta', 'hot'] as $f) {
+            foreach (['container_number', 'status', 'account', 'driver', 'drayman', 'notes', 'date_in', 'mt_date', 'ld_date', 'lfd', 'eta', 'list_note', 'on_list'] as $f) {
                 if (isset($_POST[$f])) $fields[$f] = $_POST[$f];
             }
             [$data, $errors] = yardCleanFields($fields);
@@ -55,6 +59,15 @@ try {
                 $version = (string) Input::get('version');
                 if ($version !== '' && $version !== (string) $unit->updated_at) {
                     yard_respond(false, 'Someone else just changed ' . $unit->container_number . '. Your edits were not saved — reopen the card to see the latest.', ['conflict' => true]);
+                }
+                if (isset($data['container_number']) && $data['container_number'] !== $unit->container_number) {
+                    $params = [$data['container_number'], $unit->id];
+                    $where = yardWarehouseWhere('yu.warehouse_id', $unit->warehouse_id, $params);
+                    $dupe = DB::getInstance()->query(
+                        "SELECT yl.code FROM yard_units yu LEFT JOIN yard_locations yl ON yl.id = yu.location_id
+                         WHERE yu.container_number = ? AND yu.id != ? AND {$where} AND yu.picked_up_at IS NULL LIMIT 1", $params
+                    )->first();
+                    if ($dupe) yard_respond(false, $data['container_number'] . ' is already on the board' . ($dupe->code ? ' at ' . $dupe->code : ' (Incoming)') . '.');
                 }
                 updateYardUnit($unit, $data, $user_id);
                 yard_respond(true, 'Saved');
@@ -68,8 +81,19 @@ try {
                 "SELECT yu.id, yl.code FROM yard_units yu LEFT JOIN yard_locations yl ON yl.id = yu.location_id
                  WHERE yu.container_number = ? AND yu.{$where} AND yu.picked_up_at IS NULL LIMIT 1", $params
             )->first();
+            $location_id = (int) Input::get('location_id') ?: null;
+            if ($dupe && !$dupe->code && $location_id) {
+                // Typed a number that's waiting on the Incoming list into a spot: it arrived.
+                $waiting = getYardUnitById($dupe->id);
+                $err = moveYardUnit($waiting, $location_id, $user_id);
+                if ($err) yard_respond(false, $err);
+                unset($data['container_number'], $data['container_id']);
+                $data = array_filter($data, fn($v) => $v !== null);
+                if ($data) updateYardUnit(getYardUnitById($waiting->id), $data, $user_id);
+                yard_respond(true, 'Placed from Incoming', ['unit_id' => (int) $waiting->id]);
+            }
             if ($dupe) yard_respond(false, $data['container_number'] . ' is already on the board' . ($dupe->code ? ' at ' . $dupe->code : ' (Incoming)') . '.');
-            [$new, $err] = createYardUnit($warehouse_id, $data, (int) Input::get('location_id') ?: null, $user_id);
+            [$new, $err] = createYardUnit($warehouse_id, $data, $location_id, $user_id);
             if ($err) yard_respond(false, $err);
             yard_respond(true, 'Added', ['unit_id' => (int) $new->id]);
 
@@ -108,6 +132,16 @@ try {
             logYardEvent($unit, $user_id, 'deleted', $unit->last_location_code, null, 'Deleted ' . $unit->container_number);
             DB::getInstance()->delete('yard_units', (int) $unit->id);
             yard_respond(true, 'Deleted');
+
+        case 'unlist':
+            if (!$unit) yard_respond(false, 'Missing card.');
+            if (!$unit->location_id && !$unit->picked_up_at) {
+                logYardEvent($unit, $user_id, 'deleted', null, null, 'Removed from Incoming');
+                DB::getInstance()->delete('yard_units', (int) $unit->id);
+                yard_respond(true, $unit->container_number . ' removed from Incoming');
+            }
+            updateYardUnit($unit, ['on_list' => 0], $user_id);
+            yard_respond(true, $unit->container_number . ' removed from the Incoming list');
 
         default:
             yard_respond(false, 'Unknown action');

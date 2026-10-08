@@ -1,8 +1,15 @@
 <?php
 /**
- * Yard Board — live door & yard map (replaces the Kent T-Card Google Sheet).
- * Every door and yard spot is a card; changes made by anyone show up on
- * every open board within a few seconds. See includes/yard_functions.php.
+ * Yard Board — the Kent T-Card sheet, live. Laid out like the TODAY tab:
+ * one row per door/yard spot (DR | CONTAINER | STATUS | DATE IN | MT DATE |
+ * LD DATE | DRIVER | ACCOUNT | LFD | Drayman | DC NOTES) with the incoming
+ * block (Container | Customer | STATUS | ETA | LOC) on the right.
+ *
+ * Type in any cell to change it; type a container number into an empty row
+ * to put a container there, or into the incoming block to add one that's on
+ * the way. Drag a container by its grip onto another row to move it (onto
+ * an occupied row to swap). Clearing a CONTAINER cell marks it picked up.
+ * Everyone's board refreshes every few seconds. See includes/yard_functions.php.
  */
 require_once '../users/init.php';
 require_once $abs_us_root.$us_url_root.'users/includes/template/prep.php';
@@ -21,303 +28,194 @@ ensureYardTables();
 $initial   = getYardBoard($warehouse_id);
 $customers = getYardCustomerColors();
 $csrf      = Token::generate();
+$wh_qs     = $warehouse_id ? '?warehouse_id=' . (int) $warehouse_id : '';
 ?>
 <style>
-.yb { --yb-border:#e5e7eb; --yb-muted:#6b7280; --yb-text:#111827; --yb-bg:#f9fafb; --yb-red:#dc2626; --yb-amber:#d97706; --yb-green:#16a34a; color:var(--yb-text); padding-bottom:40px; }
-.yb-head { display:flex; flex-wrap:wrap; align-items:center; gap:10px; padding:16px 0 10px; }
-.yb-head h1 { font-size:22px; font-weight:700; margin:0; margin-right:auto; display:flex; align-items:center; gap:10px; }
-.yb-live { font-size:12px; font-weight:500; color:var(--yb-muted); display:inline-flex; align-items:center; gap:6px; }
-.yb-live-dot { width:8px; height:8px; border-radius:50%; background:var(--yb-green); box-shadow:0 0 0 0 rgba(22,163,74,.6); animation:ybPulse 2s infinite; }
-.yb-live.offline .yb-live-dot { background:var(--yb-red); animation:none; }
-@keyframes ybPulse { 0%{box-shadow:0 0 0 0 rgba(22,163,74,.5)} 70%{box-shadow:0 0 0 7px rgba(22,163,74,0)} 100%{box-shadow:0 0 0 0 rgba(22,163,74,0)} }
-.yb-btn { border:1px solid var(--yb-border); background:#fff; color:var(--yb-text); border-radius:8px; padding:7px 12px; font-size:13px; font-weight:600; cursor:pointer; display:inline-flex; align-items:center; gap:6px; text-decoration:none; white-space:nowrap; }
-.yb-btn:hover { background:#f3f4f6; text-decoration:none; color:var(--yb-text); }
-.yb-btn.primary { background:#2563eb; border-color:#2563eb; color:#fff; }
-.yb-btn.primary:hover { background:#1d4ed8; color:#fff; }
-.yb-btn.danger { color:var(--yb-red); }
-.yb-btn.active { background:#111827; border-color:#111827; color:#fff; }
-.yb-btn:disabled { opacity:.5; cursor:default; }
-.yb-select, .yb-input { border:1px solid #d1d5db; border-radius:8px; padding:7px 10px; font-size:13px; background:#fff; color:var(--yb-text); min-height:34px; }
-.yb-toolbar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:12px; }
-.yb-toolbar .yb-input { flex:1 1 200px; max-width:320px; }
-.yb-chips { display:flex; flex-wrap:wrap; gap:6px; }
-.yb-chip { border:1px solid var(--yb-border); background:#fff; border-radius:999px; padding:4px 10px; font-size:12px; font-weight:600; cursor:pointer; display:inline-flex; gap:6px; align-items:center; color:var(--yb-text); }
-.yb-chip b { font-variant-numeric:tabular-nums; }
-.yb-chip.on { outline:2px solid #111827; outline-offset:-1px; }
-.yb-chip.alert { color:var(--yb-red); border-color:#fecaca; background:#fef2f2; }
-.yb-chip.warn { color:var(--yb-amber); border-color:#fde68a; background:#fffbeb; }
-.yb-layout { display:grid; grid-template-columns:minmax(0,1fr) 290px; gap:16px; align-items:start; }
-.yb-section { margin-bottom:18px; }
-.yb-section h2 { font-size:13px; text-transform:uppercase; letter-spacing:.06em; color:var(--yb-muted); margin:0 0 8px; font-weight:700; display:flex; gap:8px; align-items:baseline; }
-.yb-section h2 span { font-weight:500; letter-spacing:0; text-transform:none; }
-.yb-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(150px, 1fr)); gap:8px; }
-.yb-tile { position:relative; background:#fff; border:1px solid var(--yb-border); border-left:6px solid var(--acct, #d1d5db); border-radius:10px; padding:8px 9px 7px; min-height:96px; cursor:pointer; display:flex; flex-direction:column; gap:3px; transition:box-shadow .15s, opacity .15s, transform .15s; user-select:none; }
-.yb-tile:hover, .yb-tile:focus-visible { box-shadow:0 2px 10px rgba(0,0,0,.08); outline:none; }
-.yb-tile.tinted { background:color-mix(in srgb, var(--acct) 18%, #fff); }
-.yb-tile.dim { opacity:.25; }
-.yb-tile.match { box-shadow:0 0 0 3px #2563eb; }
-.yb-tile.flash { animation:ybFlash 1.6s ease-out; }
-@keyframes ybFlash { 0%{box-shadow:0 0 0 4px #facc15} 100%{box-shadow:0 0 0 0 rgba(250,204,21,0)} }
-.yb-tile.drop-target { box-shadow:0 0 0 3px #2563eb inset; }
-.yb-tile.empty { border:1.5px dashed #d1d5db; background:transparent; align-items:center; justify-content:center; color:#9ca3af; min-height:96px; }
-.yb-tile.empty .yb-code { position:absolute; top:7px; left:9px; }
-.yb-tile.empty .yb-plus { font-size:22px; line-height:1; }
-.yb-top { display:flex; justify-content:space-between; align-items:center; gap:4px; }
-.yb-code { font-size:12px; font-weight:800; color:#374151; letter-spacing:.02em; }
-.yb-pill { font-size:11px; font-weight:700; border-radius:999px; padding:1px 8px; white-space:nowrap; }
-.yb-num { font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:14.5px; font-weight:700; letter-spacing:.02em; word-break:break-all; line-height:1.25; }
-.yb-acct { font-size:12px; color:#374151; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.yb-acct small { color:var(--yb-muted); font-weight:500; }
-.yb-foot { margin-top:auto; display:flex; gap:6px; align-items:center; font-size:11.5px; color:var(--yb-muted); flex-wrap:wrap; }
-.yb-lfd { font-weight:700; border-radius:4px; padding:0 4px; }
-.yb-lfd.overdue { background:var(--yb-red); color:#fff; }
-.yb-lfd.soon { background:#fef3c7; color:#92400e; }
-.yb-hot { color:#dc2626; font-size:11px; font-weight:800; }
-.yb-icons { margin-left:auto; display:flex; gap:6px; }
-.yb-check { position:absolute; top:-7px; right:-7px; width:22px; height:22px; border-radius:50%; background:var(--yb-green); color:#fff; font-size:12px; display:none; align-items:center; justify-content:center; box-shadow:0 1px 3px rgba(0,0,0,.2); }
-.yb.checking .yb-tile.checked .yb-check { display:flex; }
-.yb.checking .yb-tile:not(.empty):not(.checked) { border-style:dashed; }
-.yb-check-bar { display:none; background:#ecfdf5; border:1px solid #a7f3d0; border-radius:10px; padding:8px 12px; margin-bottom:12px; font-size:13px; align-items:center; gap:10px; flex-wrap:wrap; }
-.yb.checking .yb-check-bar { display:flex; }
-.yb-side { background:#fff; border:1px solid var(--yb-border); border-radius:12px; padding:12px; position:sticky; top:12px; max-height:calc(100vh - 24px); overflow:auto; }
-.yb-side h2 { margin-bottom:10px; }
-.yb-inc { border:1px solid var(--yb-border); border-left:5px solid var(--acct, #d1d5db); border-radius:8px; padding:7px 9px; margin-bottom:6px; cursor:grab; background:#fff; }
-.yb-inc:hover { background:#f9fafb; }
-.yb-inc .yb-num { font-size:13.5px; }
-.yb-inc-meta { font-size:12px; color:var(--yb-muted); display:flex; gap:8px; flex-wrap:wrap; }
-.yb-inc-drop { border:1.5px dashed transparent; border-radius:8px; min-height:30px; }
-.yb-inc-drop.drop-target { border-color:#2563eb; background:#eff6ff; }
-.yb-empty-msg { color:var(--yb-muted); font-size:13px; padding:8px 2px; }
-.yb-legend { display:flex; flex-wrap:wrap; gap:6px 12px; font-size:12px; color:#374151; margin-top:14px; }
-.yb-legend span { display:inline-flex; align-items:center; gap:5px; }
-.yb-legend i { width:12px; height:12px; border-radius:3px; display:inline-block; }
-.yb-setup { background:#fff; border:1px dashed #d1d5db; border-radius:12px; padding:28px; text-align:center; }
-/* modal */
-.yb-modal-bg { position:fixed; inset:0; background:rgba(17,24,39,.45); z-index:1050; display:none; align-items:flex-start; justify-content:center; padding:4vh 12px; overflow:auto; }
-.yb-modal-bg.open { display:flex; }
-.yb-modal { background:#fff; border-radius:14px; width:100%; max-width:560px; box-shadow:0 20px 50px rgba(0,0,0,.25); }
-.yb-modal-head { padding:14px 18px; border-bottom:1px solid var(--yb-border); display:flex; align-items:center; gap:10px; }
-.yb-modal-head h3 { margin:0; font-size:17px; font-weight:700; flex:1; }
-.yb-x { border:0; background:none; font-size:24px; line-height:1; color:var(--yb-muted); cursor:pointer; padding:0 4px; }
-.yb-modal-body { padding:14px 18px; }
-.yb-form { display:grid; grid-template-columns:1fr 1fr; gap:10px 12px; }
-.yb-form label { display:block; font-size:12px; font-weight:600; color:#374151; margin-bottom:3px; }
-.yb-form .full { grid-column:1 / -1; }
-.yb-form .yb-input, .yb-form .yb-select { width:100%; max-width:none; }
-.yb-form textarea.yb-input { min-height:60px; resize:vertical; }
-.yb-banner { border-radius:8px; padding:8px 10px; font-size:13px; margin-bottom:10px; display:none; }
-.yb-banner.show { display:block; }
-.yb-banner.warn { background:#fffbeb; border:1px solid #fde68a; color:#92400e; }
-.yb-banner.err { background:#fef2f2; border:1px solid #fecaca; color:#991b1b; }
-.yb-cf { background:#f9fafb; border:1px solid var(--yb-border); border-radius:8px; padding:8px 10px; font-size:13px; margin-top:12px; display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
-.yb-meta { font-size:12px; color:var(--yb-muted); margin-top:10px; }
-.yb-history { margin-top:10px; font-size:12px; max-height:150px; overflow:auto; border-top:1px solid var(--yb-border); padding-top:8px; }
-.yb-history div { padding:2px 0; color:#374151; }
-.yb-history time { color:var(--yb-muted); margin-right:6px; }
-.yb-modal-foot { padding:12px 18px; border-top:1px solid var(--yb-border); display:flex; gap:8px; flex-wrap:wrap; }
-.yb-modal-foot .spacer { flex:1; }
-.yb-toast { position:fixed; left:50%; bottom:24px; transform:translateX(-50%) translateY(20px); background:#111827; color:#fff; padding:10px 16px; border-radius:10px; font-size:14px; opacity:0; pointer-events:none; transition:all .2s; z-index:1100; max-width:90vw; }
-.yb-toast.show { opacity:1; transform:translateX(-50%) translateY(0); }
-.yb-toast.err { background:#b91c1c; }
-@media (max-width: 900px) {
-  .yb-layout { grid-template-columns:1fr; }
-  .yb-side { position:static; max-height:none; }
-}
-@media (max-width: 520px) {
-  .yb-grid { grid-template-columns:repeat(2, minmax(0,1fr)); gap:6px; }
-  .yb-head h1 { font-size:19px; width:100%; }
-  .yb-form { grid-template-columns:1fr; }
-  .yb-toolbar .yb-input { max-width:none; }
-  .yb-modal-bg { padding:0; }
-  .yb-modal { border-radius:0; min-height:100vh; }
-}
-@media print {
-  .yb-toolbar, .yb-head .yb-btn, .yb-side, .yb-live { display:none !important; }
-  .yb-layout { grid-template-columns:1fr; }
-  .yb-tile { break-inside:avoid; }
-}
+/* Google-Sheets look: Arial 10 bold, centred, light gridlines, grey header row. */
+.ys-sheet { --grid:#e2e2e2; --head:#b7b7b7; --door:#93c47d; --yard:#6fa8dc; --yard3:#6d9eeb; --hot:#ffff00; --late:#ff0000; --soon:#f9cb9c;
+  --loc:#ffff00; --sel:#1a73e8; --muted:#5f6368; --ink:#000; --paper:#fff;
+  font-family: Arial, Helvetica, sans-serif; color: var(--ink); padding-bottom: 32px; }
+.ys-top { display:flex; flex-wrap:wrap; align-items:center; gap:8px 12px; padding:12px 0 8px; }
+.ys-top h1 { font-size:20px; font-weight:700; margin:0; display:flex; align-items:center; gap:10px; }
+.ys-live { font-size:12px; font-weight:400; color:var(--muted); display:inline-flex; align-items:center; gap:5px; }
+.ys-live i { width:8px; height:8px; border-radius:50%; background:#188038; display:inline-block; }
+.ys-live.off i { background:#d93025; }
+.ys-tabs { display:flex; gap:2px; margin-left:auto; flex-wrap:wrap; }
+.ys-tab { font:inherit; font-size:13px; padding:6px 12px; border:1px solid #dadce0; background:#f1f3f4; color:#3c4043; border-radius:6px 6px 0 0; text-decoration:none; }
+.ys-tab:hover { background:#e8eaed; color:#3c4043; text-decoration:none; }
+.ys-tab.on { background:var(--paper); border-bottom-color:var(--paper); color:#188038; font-weight:700; }
+.ys-tools { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-bottom:8px; font-size:13px; }
+.ys-tools input[type=search], .ys-tools select { font:inherit; border:1px solid #dadce0; border-radius:4px; padding:5px 8px; min-height:30px; background:var(--paper); }
+.ys-tools input[type=search] { width:240px; max-width:100%; }
+.ys-chip { font:inherit; border:1px solid #dadce0; background:var(--paper); border-radius:14px; padding:3px 10px; cursor:pointer; }
+.ys-chip.on { background:#e8f0fe; border-color:var(--sel); color:#174ea6; }
+.ys-chip b { font-variant-numeric:tabular-nums; }
+.ys-count { color:var(--muted); font-variant-numeric:tabular-nums; }
+.ys-wrap { overflow:auto; max-height:calc(100vh - 150px); border:1px solid #c0c0c0; background:var(--paper); }
+table.ys { border-collapse:separate; border-spacing:0; font-size:13.3px; font-weight:700; table-layout:fixed; width:max-content; }
+.ys th, .ys td { border-right:1px solid var(--grid); border-bottom:1px solid var(--grid); padding:0; height:22px; text-align:center; white-space:nowrap; overflow:hidden; }
+.ys thead th { position:sticky; top:0; z-index:3; background:var(--head); font-weight:700; padding:0 4px; border-bottom:1px solid #9e9e9e; }
+.ys thead th.inc { background:var(--paper); color:#0000ff; }
+.ys thead th.gap, .ys td.gap { background:#f8f9fa; }
+.ys td.dr { position:sticky; left:0; z-index:2; background:var(--yard); cursor:default; }
+.ys thead th.dr { left:0; z-index:4; }
+.ys tr.door td.dr { background:var(--door); }
+.ys tr.third td.dr { background:var(--yard3); }
+.ys tr.nolocrow td.dr { background:var(--paper); }
+.ys input, .ys select { font:inherit; color:inherit; width:100%; height:21px; border:0; background:transparent; text-align:center; padding:0 3px; outline:none; text-overflow:ellipsis; }
+.ys select { appearance:none; -webkit-appearance:none; cursor:pointer; text-align-last:center; }
+.ys input:disabled, .ys select:disabled { cursor:default; color:transparent; }
+.ys td:focus-within { box-shadow:inset 0 0 0 2px var(--sel); }
+.ys td.c-container { position:relative; }
+.ys .grip { position:absolute; left:0; top:0; bottom:0; width:12px; cursor:grab; color:#80868b; font-size:10px; line-height:22px; display:none; user-select:none; }
+.ys tr.has .c-container:hover .grip, .ys tr.inc-has .c-icontainer:hover .grip, .ys .grip:focus { display:block; }
+@media (hover: none) { .ys tr.has .c-container .grip, .ys tr.inc-has .c-icontainer .grip { display:block; } .ys tr.has .actbtn { display:block; } }
+.ys td.c-icontainer { position:relative; }
+.ys td.c-container input, .ys td.c-icontainer input { padding:0 12px; }
+/* Container Flow photo record: a corner marker like a Sheets note */
+.ys .cf { position:absolute; right:0; top:0; width:0; height:0; border-style:solid; border-width:0 9px 9px 0; border-color:transparent #1a73e8 transparent transparent; font-size:0; }
+.ys .cf.done { border-right-color:#188038; }
+.ys .cf:hover, .ys .cf:focus { border-width:0 13px 13px 0; }
+.ys td.hot { background:var(--hot) !important; }
+.ys td.late { background:var(--late) !important; }
+.ys td.soon { background:var(--soon) !important; }
+.ys td.hotlabel { background:var(--late) !important; }
+.ys td.locset { background:var(--loc); }
+.ys tr.dim td:not(.dr):not(.gap) { opacity:.28; }
+.ys tr.hit td.c-container, .ys tr.ihit td.c-icontainer { box-shadow:inset 0 0 0 2px #f29900; }
+.ys tr.drop td:not(.gap):not(.inc) { box-shadow:inset 0 2px 0 var(--sel), inset 0 -2px 0 var(--sel); }
+.ys tr.idrop td.inc { box-shadow:inset 0 2px 0 var(--sel), inset 0 -2px 0 var(--sel); }
+.ys tr.flash td:not(.dr):not(.gap) { animation:ysFlash 1.8s ease-out; }
+@keyframes ysFlash { 0% { background-color:#fde293; } }
+.ys td.act { width:28px; }
+.ys .actbtn { border:0; background:none; cursor:pointer; color:#80868b; font:inherit; font-size:13px; width:100%; height:21px; display:none; }
+.ys tr.has:hover .actbtn, .ys .actbtn:focus { display:block; }
+.ys .actbtn:hover { color:#d93025; }
+.ys-sheet.checking .ys .actbtn { display:none !important; }
+.ys .chk { display:none; width:15px; height:15px; margin:3px auto; cursor:pointer; }
+.ys-sheet.checking .ys tr.has .chk { display:block; }
+.ys-moving { display:none; position:sticky; top:0; z-index:5; background:#e8f0fe; border:1px solid var(--sel); color:#174ea6; padding:6px 10px; font-size:13px; margin-bottom:6px; border-radius:4px; }
+.ys-moving.show { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+.ys-moving button { font:inherit; border:1px solid #dadce0; background:var(--paper); border-radius:4px; padding:2px 10px; cursor:pointer; }
+.ys-sheet.picking .ys tbody tr:not(.nolocrow) td.dr { cursor:pointer; outline:2px dashed var(--sel); outline-offset:-3px; }
+.ys-help { font-size:12px; color:var(--muted); margin-top:8px; font-weight:400; }
+.ys-toast { position:fixed; left:50%; bottom:24px; transform:translateX(-50%); background:#323232; color:#fff; padding:10px 14px; border-radius:4px; font:14px Arial, sans-serif; display:none; gap:14px; align-items:center; z-index:1100; max-width:92vw; box-shadow:0 2px 8px rgba(0,0,0,.3); }
+.ys-toast.show { display:flex; }
+.ys-toast.err { background:#b3261e; }
+.ys-toast button { font:inherit; font-weight:700; color:#8ab4f8; background:none; border:0; cursor:pointer; padding:0; }
+.ys-empty { padding:24px; text-align:center; border:1px dashed #c0c0c0; background:var(--paper); margin-bottom:12px; font-weight:400; }
+@media (max-width:600px) { .ys-tabs { margin-left:0; } .ys-wrap { max-height:none; } }
+@media (prefers-reduced-motion: reduce) { .ys tr.flash td { animation:none; } }
 </style>
 
 <div id="page-wrapper">
-<div class="container-fluid yb" id="yb">
+<div class="container-fluid ys-sheet" id="ysSheet">
 
-    <div class="yb-head">
-        <h1><i class="fa fa-th"></i> Yard Board
-            <span class="yb-live" id="ybLive" title="Board refreshes automatically"><span class="yb-live-dot"></span><span id="ybLiveText">Live</span></span>
-        </h1>
+    <div class="ys-top">
+        <h1>Yard Board <span class="ys-live" id="ysLive"><i></i><span id="ysLiveText">Live</span></span></h1>
         <?php if (count($warehouses) > 1): ?>
-        <select class="yb-select" id="ybWarehouse" aria-label="Warehouse">
+        <select id="ysWarehouse" aria-label="Warehouse" class="ys-tab" style="border-radius:6px;">
             <?php foreach ($warehouses as $w): ?>
             <option value="<?php echo (int) $w->id; ?>" <?php echo (int) $w->id === (int) $warehouse_id ? 'selected' : ''; ?>><?php echo htmlspecialchars($w->name); ?></option>
             <?php endforeach; ?>
         </select>
         <?php endif; ?>
-        <button type="button" class="yb-btn primary" id="ybAddIncoming"><i class="fa fa-plus"></i> Incoming</button>
-        <button type="button" class="yb-btn" id="ybCheckToggle"><i class="fa fa-check-square-o"></i> Yard check</button>
-        <a class="yb-btn" href="yard_history.php<?php echo $warehouse_id ? '?warehouse_id=' . (int) $warehouse_id : ''; ?>"><i class="fa fa-history"></i> History</a>
-        <a class="yb-btn" href="container_dashboard.php"><i class="fa fa-cubes"></i> Containers</a>
-        <?php if ($is_supervisor): ?>
-        <a class="yb-btn" href="yard_settings.php<?php echo $warehouse_id ? '?warehouse_id=' . (int) $warehouse_id : ''; ?>"><i class="fa fa-cog"></i> Setup</a>
-        <?php endif; ?>
+        <nav class="ys-tabs" aria-label="Yard sheets">
+            <a class="ys-tab on" href="yard_board.php<?php echo $wh_qs; ?>" aria-current="page">TODAY</a>
+            <a class="ys-tab" href="yard_history.php<?php echo $wh_qs; ?>">Picked Up</a>
+            <a class="ys-tab" href="yard_history.php?view=moves<?php echo $warehouse_id ? '&warehouse_id=' . (int) $warehouse_id : ''; ?>">Move Sheet</a>
+            <a class="ys-tab" href="container_dashboard.php">Containers</a>
+            <?php if ($is_supervisor): ?><a class="ys-tab" href="yard_settings.php<?php echo $wh_qs; ?>">Setup</a><?php endif; ?>
+        </nav>
     </div>
 
     <?php if (empty($initial['locations'])): ?>
-    <div class="yb-setup">
-        <h3 style="margin-top:0;">No doors or yard spots yet</h3>
-        <?php if ($is_supervisor): ?>
-        <p>Add your doors (DR01–DR14) and yard spots (F01–F47), or import the T-Card sheet to set everything up in one go.</p>
-        <a class="yb-btn primary" href="yard_settings.php<?php echo $warehouse_id ? '?warehouse_id=' . (int) $warehouse_id : ''; ?>">Set up the yard</a>
-        <?php else: ?>
-        <p>Ask a supervisor to set up the doors and yard spots for this warehouse.</p>
-        <?php endif; ?>
+    <div class="ys-empty">
+        No doors or yard spots yet.
+        <?php if ($is_supervisor): ?><a href="yard_settings.php<?php echo $wh_qs; ?>">Set up the yard or import the T-Card sheet</a>.<?php else: ?>Ask a supervisor to set up the yard.<?php endif; ?>
     </div>
     <?php endif; ?>
 
-    <div class="yb-toolbar">
-        <input type="search" class="yb-input" id="ybSearch" placeholder="Find container, account, driver…" autocomplete="off">
-        <select class="yb-select" id="ybAccount" aria-label="Account"><option value="">All accounts</option></select>
-        <div class="yb-chips" id="ybChips"></div>
+    <div class="ys-tools">
+        <input type="search" id="ysSearch" placeholder="Find a container, account, driver…" autocomplete="off" aria-label="Find">
+        <button type="button" class="ys-chip" data-chip="late">Past LFD <b id="nLate">0</b></button>
+        <button type="button" class="ys-chip" data-chip="soon">LFD today/tomorrow <b id="nSoon">0</b></button>
+        <button type="button" class="ys-chip" data-chip="hot">Hot <b id="nHot">0</b></button>
+        <button type="button" class="ys-chip" id="ysCheckToggle">Yard check</button>
+        <span class="ys-count" id="ysCounts"></span>
     </div>
 
-    <div class="yb-check-bar">
-        <i class="fa fa-check-circle" style="color:#16a34a;"></i>
-        <span id="ybCheckProgress"></span>
-        <span style="color:#6b7280;">Tap each card once you've seen it in its spot. Wrong container? Use the pencil to fix it.</span>
-        <button type="button" class="yb-btn" id="ybCheckDone" style="margin-left:auto;">Done</button>
+    <div class="ys-moving" id="ysMoving" role="status">
+        <span id="ysMovingText"></span>
+        <button type="button" id="ysMoveIncoming">Back to Incoming</button>
+        <button type="button" id="ysMoveCancel">Cancel</button>
     </div>
 
-    <div class="yb-layout">
-        <div>
-            <div class="yb-section"><h2>Doors <span id="ybDoorCount"></span></h2><div class="yb-grid" id="ybDoors"></div></div>
-            <div class="yb-section"><h2>Yard <span id="ybYardCount"></span></h2><div class="yb-grid" id="ybYard"></div></div>
-            <div class="yb-legend" id="ybLegend"></div>
-        </div>
-        <aside class="yb-side">
-            <div class="yb-section" style="margin:0;">
-                <h2>Incoming <span id="ybIncCount"></span></h2>
-                <div class="yb-inc-drop" id="ybIncoming"></div>
-            </div>
-        </aside>
+    <div class="ys-wrap" id="ysWrap">
+        <table class="ys" id="ysTable">
+            <colgroup>
+                <col style="width:52px"><col style="width:132px"><col style="width:84px"><col style="width:62px"><col style="width:66px"><col style="width:64px">
+                <col style="width:190px"><col style="width:140px"><col style="width:50px"><col style="width:88px"><col style="width:160px">
+                <col style="width:28px">
+                <col style="width:132px"><col style="width:132px"><col style="width:190px"><col style="width:50px"><col style="width:52px">
+            </colgroup>
+            <thead>
+                <tr>
+                    <th class="dr">DR</th><th>CONTAINER</th><th>STATUS</th><th>DATE IN</th><th>MT DATE</th><th>LD DATE</th>
+                    <th>DRIVER</th><th>ACCOUNT</th><th>LFD</th><th>Drayman</th><th>DC NOTES</th>
+                    <th class="gap" title="Picked up / yard check"></th>
+                    <th class="inc">Container</th><th class="inc">Customer</th><th class="inc">STATUS</th><th class="inc">ETA</th><th class="inc">LOC</th>
+                </tr>
+            </thead>
+            <tbody id="ysBody"></tbody>
+        </table>
     </div>
+    <p class="ys-help">
+        A small blue corner on a container number links to its Container Flow photo record (green once reviewed).
+        Type a container number into an empty row to put it there, or into the blue Container column to add one that's on the way.
+        Grab the <b>⠿</b> grip next to a container number to drag it to another row (drop it on an occupied row to swap).
+        On a phone, tap the grip, then tap the DR cell of the row to move it to. Clear a CONTAINER cell, or use ⇥, when a container is picked up.
+    </p>
 </div>
 </div>
 
-<div class="yb-modal-bg" id="ybModal" role="dialog" aria-modal="true" aria-labelledby="ybModalTitle">
-    <div class="yb-modal">
-        <div class="yb-modal-head">
-            <h3 id="ybModalTitle">Container</h3>
-            <button type="button" class="yb-x" data-close aria-label="Close">&times;</button>
-        </div>
-        <form id="ybForm" autocomplete="off">
-            <div class="yb-modal-body">
-                <div class="yb-banner warn" id="ybStale"></div>
-                <div class="yb-banner err" id="ybError"></div>
-                <div class="yb-form">
-                    <div class="full">
-                        <label for="f_container_number">Container / trailer #</label>
-                        <input class="yb-input" id="f_container_number" name="container_number" required style="font-family:ui-monospace,monospace;font-weight:700;text-transform:uppercase;">
-                    </div>
-                    <div>
-                        <label for="f_status">Status</label>
-                        <select class="yb-select" id="f_status" name="status">
-                            <?php foreach (YARD_STATUSES as $s): ?><option><?php echo $s; ?></option><?php endforeach; ?>
-                        </select>
-                    </div>
-                    <div>
-                        <label for="f_location">Location</label>
-                        <select class="yb-select" id="f_location"></select>
-                    </div>
-                    <div>
-                        <label for="f_account">Account</label>
-                        <input class="yb-input" id="f_account" name="account" list="ybAccounts">
-                    </div>
-                    <div>
-                        <label for="f_driver">Driver / ref</label>
-                        <input class="yb-input" id="f_driver" name="driver" placeholder="e.g. PRELOAD, Sisi">
-                    </div>
-                    <div>
-                        <label for="f_drayman">Drayman</label>
-                        <input class="yb-input" id="f_drayman" name="drayman" list="ybDraymen">
-                    </div>
-                    <div>
-                        <label for="f_lfd">LFD (last free day)</label>
-                        <input class="yb-input" type="date" id="f_lfd" name="lfd">
-                    </div>
-                    <div class="yb-onsite">
-                        <label for="f_date_in">Date in</label>
-                        <input class="yb-input" type="date" id="f_date_in" name="date_in">
-                    </div>
-                    <div class="yb-incoming-only">
-                        <label for="f_eta">ETA</label>
-                        <input class="yb-input" type="date" id="f_eta" name="eta">
-                    </div>
-                    <div class="yb-onsite">
-                        <label for="f_mt_date">MT date</label>
-                        <input class="yb-input" type="date" id="f_mt_date" name="mt_date">
-                    </div>
-                    <div class="yb-onsite">
-                        <label for="f_ld_date">LD date</label>
-                        <input class="yb-input" type="date" id="f_ld_date" name="ld_date">
-                    </div>
-                    <div class="full">
-                        <label for="f_notes">DC notes</label>
-                        <textarea class="yb-input" id="f_notes" name="notes" placeholder="BOL / UL #, units, damage…"></textarea>
-                    </div>
-                    <div class="full">
-                        <label style="display:inline-flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;">
-                            <input type="checkbox" id="f_hot" name="hot" value="1"> <span class="yb-hot">HOT</span> container (priority)
-                        </label>
-                    </div>
-                </div>
-                <div class="yb-cf" id="ybCf"></div>
-                <div class="yb-meta" id="ybMeta"></div>
-                <div class="yb-history" id="ybHistory" hidden></div>
-            </div>
-            <div class="yb-modal-foot">
-                <button type="submit" class="yb-btn primary" id="ybSave">Save</button>
-                <button type="button" class="yb-btn" id="ybPickup"><i class="fa fa-truck"></i> Picked up</button>
-                <span class="spacer"></span>
-                <button type="button" class="yb-btn" id="ybShowHistory"><i class="fa fa-history"></i></button>
-                <button type="button" class="yb-btn danger" id="ybDelete"><i class="fa fa-trash"></i></button>
-            </div>
-        </form>
-    </div>
-</div>
-
-<datalist id="ybAccounts">
-    <?php foreach ($customers as $c): ?><option value="<?php echo htmlspecialchars($c->name); ?>"><?php endforeach; ?>
-</datalist>
-<datalist id="ybDraymen"></datalist>
-<div class="yb-toast" id="ybToast" role="status" aria-live="polite"></div>
+<datalist id="ysAccounts"><?php foreach ($customers as $c): ?><option value="<?php echo htmlspecialchars($c->name); ?>"><?php endforeach; ?></datalist>
+<datalist id="ysDraymen"></datalist>
+<datalist id="ysLabels"><option value="HOT CONTAINER"><option value="DROP SHIP CONTAINER"></datalist>
+<div class="ys-toast" id="ysToast" role="status" aria-live="polite"><span id="ysToastText"></span><button type="button" id="ysToastUndo" hidden>UNDO</button></div>
 
 <script>
 (function () {
     var BASE = <?php echo json_encode($us_url_root); ?>;
     var CSRF = <?php echo json_encode($csrf); ?>;
     var WAREHOUSE_ID = <?php echo json_encode($warehouse_id); ?>;
-    var IS_SUPERVISOR = <?php echo $is_supervisor ? 'true' : 'false'; ?>;
-    var STATUS_COLORS = <?php echo json_encode(YARD_STATUS_COLORS); ?>;
-    var CUSTOMER_COLORS = <?php echo json_encode(array_map(fn($c) => ['name' => $c->name, 'color' => $c->effective_color], $customers)); ?>;
-    var POLL_MS = 8000;
+    var STATUSES = ['', 'Empty', 'Loaded', 'Full', 'Working', 'Partial'];
+    var POLL_MS = 5000;
 
     var state = <?php echo json_encode($initial); ?>;
-    var filter = { q: '', account: '', chip: '' };
+    var filter = { q: '', chip: '' };
     var checking = false;
-    var editing = null;      // unit being edited (snapshot) or {newAt: locId|null}
-    var prevUnitStamp = {};  // unit id → updated_at, to flash changed cards
+    var picking = null;            // unit being moved by tap
+    var rowsBuilt = 0;
+    var lastStamp = {};            // unit id → updated_at|location, to flash rows others changed
     var $ = function (id) { return document.getElementById(id); };
 
     // ---------- helpers ----------
-    function esc(s) {
-        return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-    }
+    function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
     function md(d) { if (!d) return ''; var p = d.split('-'); return (+p[1]) + '/' + (+p[2]); }
-    function toast(msg, isErr) {
-        var t = $('ybToast');
-        t.textContent = msg;
-        t.className = 'yb-toast show' + (isErr ? ' err' : '');
-        clearTimeout(toast._t);
-        toast._t = setTimeout(function () { t.className = 'yb-toast'; }, isErr ? 4500 : 2200);
+    function byId(id) { id = +id; return state.units.concat(state.incoming).filter(function (u) { return u.id === id; })[0] || null; }
+    function locById(id) { return state.locations.filter(function (l) { return l.id === +id; })[0] || null; }
+    function unitAt(locId) { return state.units.filter(function (u) { return u.location_id === locId; })[0] || null; }
+
+    var toastTimer;
+    function toast(msg, isErr, undo) {
+        $('ysToastText').textContent = msg;
+        $('ysToast').className = 'ys-toast show' + (isErr ? ' err' : '');
+        var b = $('ysToastUndo');
+        b.hidden = !undo;
+        b.onclick = function () { $('ysToast').className = 'ys-toast'; undo(); };
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(function () { $('ysToast').className = 'ys-toast'; }, undo ? 7000 : (isErr ? 5000 : 2200));
     }
     function post(data) {
         var fd = new FormData();
@@ -326,458 +224,392 @@ $csrf      = Token::generate();
         Object.keys(data).forEach(function (k) { if (data[k] !== undefined && data[k] !== null) fd.append(k, data[k]); });
         return fetch(BASE + 'usersc/ajax/yard_action.php', { method: 'POST', body: fd, credentials: 'same-origin' })
             .then(function (r) { return r.text(); })
-            .then(function (text) {
-                try { return JSON.parse(text); } catch (e) {
-                    console.error('yard_action non-JSON:', text);
-                    return { success: false, message: 'Unexpected server response.' };
-                }
-            })
+            .then(function (t) { try { return JSON.parse(t); } catch (e) { console.error('yard_action:', t); return { success: false, message: 'Unexpected server response.' }; } })
             .catch(function () { return { success: false, message: 'Network error — check your connection.' }; });
     }
-    function unitsByLoc() {
-        var m = {};
-        state.units.forEach(function (u) { m[u.location_id] = u; });
-        return m;
+    function afterWrite(r, okMsg) {
+        if (!r.success) toast(r.message, true);
+        else if (okMsg) toast(okMsg);
+        return poll(true).then(function () { return r; });
     }
-    function findUnit(id) {
-        id = +id;
-        return state.units.concat(state.incoming).filter(function (u) { return u.id === id; })[0] || null;
-    }
-    function locById(id) { return state.locations.filter(function (l) { return l.id === +id; })[0] || null; }
-    function statusPill(s) {
-        var c = STATUS_COLORS[s] || ['#e5e7eb', '#374151'];
-        return '<span class="yb-pill" style="background:' + c[0] + ';color:' + c[1] + '">' + esc(s) + '</span>';
-    }
-    function haystack(u) {
-        return [u.container_number, u.account, u.driver, u.drayman, u.notes, u.status].join(' ').toLowerCase();
-    }
-    function chipMatch(u) {
-        switch (filter.chip) {
-            case '': return true;
-            case 'overdue': return u.lfd_state === 'overdue';
-            case 'soon': return u.lfd_state === 'soon';
-            case 'hot': return u.hot;
-            case 'unchecked': return !u.checked_today;
-            default: return u.status === filter.chip;
+
+    // ---------- grid ----------
+    // Left block cells, in sheet order. Dates are typed as m/d.
+    var LEFT = [
+        { f: 'container_number', cls: 'c-container', input: 'text' },
+        { f: 'status', input: 'select' },
+        { f: 'date_in', input: 'date' }, { f: 'mt_date', input: 'date' }, { f: 'ld_date', input: 'date' },
+        { f: 'driver', input: 'text' },
+        { f: 'account', input: 'text', list: 'ysAccounts' },
+        { f: 'lfd', input: 'date' },
+        { f: 'drayman', input: 'text', list: 'ysDraymen' },
+        { f: 'notes', input: 'text', plain: true }
+    ];
+    var RIGHT = [
+        { f: 'container_number', cls: 'c-icontainer', input: 'text' },
+        { f: 'account', input: 'text', list: 'ysAccounts' },
+        { f: 'list_note', input: 'text', list: 'ysLabels' },
+        { f: 'eta', input: 'date' }
+    ];
+
+    function cellHtml(c, side) {
+        var attrs = ' data-side="' + side + '" data-f="' + c.f + '"';
+        var inner;
+        if (c.input === 'select') {
+            inner = '<select' + attrs + ' aria-label="STATUS">' + STATUSES.map(function (s) { return '<option>' + s + '</option>'; }).join('') + '</select>';
+        } else {
+            inner = '<input' + attrs + (c.list ? ' list="' + c.list + '"' : '') + ' spellcheck="false" autocomplete="off"' +
+                (c.input === 'date' ? ' inputmode="numeric" placeholder=""' : '') + '>';
         }
+        if (c.f === 'container_number') inner = '<span class="grip" draggable="true" tabindex="-1" role="button" aria-label="Move">⠿</span>' + inner;
+        return '<td class="' + (c.cls || '') + (side === 'R' ? ' inc' : '') + '">' + inner + '</td>';
     }
+
+    function rowCount() {
+        return Math.max(state.locations.length, state.incoming.length + 5);
+    }
+
+    function buildRows() {
+        var n = rowCount(), html = [], yardIdx = 0;
+        for (var i = 0; i < n; i++) {
+            var loc = state.locations[i];
+            var cls = loc ? (loc.kind === 'door' ? 'door' : (++yardIdx % 3 === 0 ? 'yard third' : 'yard')) : 'nolocrow';
+            html.push('<tr data-i="' + i + '" class="' + cls + '"' + (loc ? ' data-loc="' + loc.id + '"' : '') + '>' +
+                '<td class="dr">' + (loc ? esc(loc.code) : '') + '</td>' +
+                (loc ? LEFT.map(function (c) { return cellHtml(c, 'L'); }).join('')
+                     : LEFT.map(function () { return '<td></td>'; }).join('')) +
+                '<td class="gap act">' + (loc ? '<button type="button" class="actbtn" title="Picked up" aria-label="Picked up">⇥</button><input type="checkbox" class="chk" title="Seen in yard check" aria-label="Seen">' : '') + '</td>' +
+                RIGHT.map(function (c) { return cellHtml(c, 'R'); }).join('') +
+                '<td class="inc c-loc"></td></tr>');
+        }
+        $('ysBody').innerHTML = html.join('');
+        rowsBuilt = n;
+    }
+
+    function setVal(el, v) {
+        if (!el || el === document.activeElement) return; // never clobber what someone is typing
+        if (el.value !== v) el.value = v;
+        el.dataset.orig = v;
+    }
+
     function matches(u) {
-        if (filter.account && (u.account || '').toUpperCase() !== filter.account) return false;
-        if (filter.q && haystack(u).indexOf(filter.q) === -1) return false;
-        return chipMatch(u);
+        if (!u) return false;
+        if (filter.chip === 'late' && u.lfd_state !== 'overdue') return false;
+        if (filter.chip === 'soon' && u.lfd_state !== 'soon') return false;
+        if (filter.chip === 'hot' && !u.hot) return false;
+        return true;
     }
-    function filtering() { return !!(filter.q || filter.account || filter.chip); }
+    function hay(u) { return u ? [u.container_number, u.account, u.driver, u.drayman, u.notes, u.list_note, u.status].join(' ').toLowerCase() : ''; }
 
-    // ---------- rendering ----------
-    function tileHtml(loc, u) {
-        if (!u) {
-            var dim = filtering() ? ' dim' : '';
-            return '<div class="yb-tile empty' + dim + '" tabindex="0" role="button" data-loc="' + loc.id + '" aria-label="' + esc(loc.code) + ' empty — add container">' +
-                '<span class="yb-code">' + esc(loc.code) + '</span><span class="yb-plus">+</span></div>';
+    function paintRow(tr, i) {
+        var loc = state.locations[i] || null;
+        var u = loc ? unitAt(loc.id) : null;
+        var iu = state.incoming[i] || null;
+        tr.dataset.unit = u ? u.id : '';
+        tr.dataset.iunit = iu ? iu.id : '';
+        tr.classList.toggle('has', !!u);
+        tr.classList.toggle('inc-has', !!iu);
+
+        // left block
+        if (loc) {
+            var tds = tr.children;
+            LEFT.forEach(function (c, k) {
+                var td = tds[k + 1], el = td.querySelector('input,select');
+                var v = u ? (c.input === 'date' ? md(u[c.f]) : (u[c.f] || '')) : '';
+                setVal(el, v);
+                if (c.f !== 'container_number') el.disabled = !u;
+                td.style.background = (u && !c.plain && u.account) ? u.color : '';
+                td.classList.toggle('hot', !!(u && u.hot && (c.f === 'container_number' || c.f === 'driver')));
+                td.classList.toggle('late', !!(u && c.f === 'lfd' && u.lfd_state === 'overdue'));
+                td.classList.toggle('soon', !!(u && c.f === 'lfd' && u.lfd_state === 'soon'));
+                if (c.f === 'container_number') {
+                    var cf = td.querySelector('.cf');
+                    if (u && u.cf) {
+                        if (!cf) { cf = document.createElement('a'); cf.className = 'cf'; cf.textContent = 'Photos'; td.appendChild(cf); }
+                        cf.href = BASE + 'usersc/container_view.php?id=' + u.cf.id;
+                        cf.title = 'Container Flow photos: ' + u.cf.status.replace('_', ' ');
+                        cf.classList.toggle('done', u.cf.status === 'reviewed');
+                    } else if (cf) cf.remove();
+                    td.title = u ? (u.updated_by ? 'Last changed by ' + u.updated_by + ' · ' + u.updated_at : '') : 'Type a container number to put it in ' + loc.code;
+                }
+            });
+            var chk = tr.querySelector('.chk');
+            if (chk) chk.checked = !!(u && u.checked_today);
         }
-        var cls = 'yb-tile tinted';
-        if (filtering()) cls += matches(u) ? (filter.q ? ' match' : '') : ' dim';
-        if (u.checked_today) cls += ' checked';
-        if (prevUnitStamp[u.id] && prevUnitStamp[u.id] !== u.updated_at + '|' + u.location_id) cls += ' flash';
-        var foot = [];
-        if (u.hot) foot.push('<span class="yb-hot">HOT</span>');
-        if (u.lfd) foot.push('<span class="yb-lfd ' + u.lfd_state + '" title="Last free day">LFD ' + md(u.lfd) + '</span>');
-        if (u.days_in !== null && u.days_in >= 0) foot.push('<span title="Days on site">' + u.days_in + 'd</span>');
-        var icons = [];
-        if (u.notes) icons.push('<i class="fa fa-sticky-note-o" title="' + esc(u.notes) + '"></i>');
-        if (u.cf) icons.push('<i class="fa fa-camera" title="Container Flow: ' + esc(u.cf.status.replace('_', ' ')) + '" style="color:' + (u.cf.status === 'reviewed' ? '#16a34a' : '#2563eb') + '"></i>');
-        if (checking) icons.push('<i class="fa fa-pencil" data-edit="' + u.id + '" title="Edit" style="cursor:pointer;color:#111827;padding:0 2px;"></i>');
-        var sub = [u.account, u.driver].filter(Boolean);
-        return '<div class="' + cls + '" style="--acct:' + esc(u.color) + '" tabindex="0" role="button" draggable="true" data-loc="' + loc.id + '" data-unit="' + u.id + '"' +
-            ' aria-label="' + esc(loc.code + ' ' + u.container_number + ' ' + u.status) + '">' +
-            '<span class="yb-check"><i class="fa fa-check"></i></span>' +
-            '<div class="yb-top"><span class="yb-code">' + esc(loc.code) + '</span>' + statusPill(u.status) + '</div>' +
-            '<div class="yb-num">' + esc(u.container_number) + '</div>' +
-            '<div class="yb-acct">' + (sub.length ? esc(sub[0]) + (sub[1] ? ' <small>· ' + esc(sub[1]) + '</small>' : '') : '&nbsp;') + '</div>' +
-            '<div class="yb-foot">' + foot.join('') + (icons.length ? '<span class="yb-icons">' + icons.join('') + '</span>' : '') + '</div>' +
-            '</div>';
-    }
 
-    function incomingHtml(u) {
-        var dim = filtering() && !matches(u) ? ' style="opacity:.3;--acct:' + esc(u.color) + '"' : ' style="--acct:' + esc(u.color) + '"';
-        var meta = [];
-        if (u.account) meta.push(esc(u.account));
-        if (u.eta) meta.push('ETA ' + md(u.eta));
-        if (u.lfd) meta.push('<span class="yb-lfd ' + u.lfd_state + '">LFD ' + md(u.lfd) + '</span>');
-        return '<div class="yb-inc" draggable="true" tabindex="0" role="button" data-unit="' + u.id + '"' + dim + '>' +
-            '<div style="display:flex;justify-content:space-between;gap:6px;align-items:center;"><span class="yb-num">' + esc(u.container_number) + '</span>' +
-            (u.hot ? '<span class="yb-hot">HOT</span>' : '') + '</div>' +
-            '<div class="yb-inc-meta">' + meta.join(' · ') + '</div>' +
-            (u.notes ? '<div class="yb-inc-meta" style="margin-top:2px;">' + esc(u.notes) + '</div>' : '') +
-            '</div>';
+        // incoming block
+        var rtd = tr.children;
+        var base = LEFT.length + 2;
+        RIGHT.forEach(function (c, k) {
+            var td = rtd[base + k], el = td.querySelector('input');
+            setVal(el, iu ? (c.input === 'date' ? md(iu[c.f]) : (iu[c.f] || '')) : '');
+            if (c.f !== 'container_number') el.disabled = !iu;
+            td.style.background = (iu && c.f === 'account' && iu.account) ? iu.color : '';
+            td.classList.toggle('hotlabel', !!(iu && c.f === 'list_note' && /\bHOT\b/i.test(iu.list_note || '')));
+        });
+        var locTd = rtd[base + RIGHT.length];
+        locTd.textContent = iu && iu.location_code ? iu.location_code : '';
+        locTd.classList.toggle('locset', !!(iu && iu.location_code));
+
+        // search + filters
+        var dim = false;
+        if (filter.chip) dim = !(matches(u) || matches(iu));
+        tr.classList.toggle('dim', dim);
+        tr.classList.toggle('hit', !!(filter.q && u && hay(u).indexOf(filter.q) >= 0));
+        tr.classList.toggle('ihit', !!(filter.q && iu && hay(iu).indexOf(filter.q) >= 0));
+
+        // flash rows someone else just changed
+        [u, iu].forEach(function (x) {
+            if (!x) return;
+            var stamp = x.updated_at + '|' + x.location_id;
+            if (lastStamp[x.id] && lastStamp[x.id] !== stamp && !tr.contains(document.activeElement)) {
+                tr.classList.remove('flash'); void tr.offsetWidth; tr.classList.add('flash');
+            }
+        });
     }
 
     function render() {
-        var byLoc = unitsByLoc();
-        var doors = state.locations.filter(function (l) { return l.kind === 'door'; });
-        var yard = state.locations.filter(function (l) { return l.kind !== 'door'; });
-        $('ybDoors').innerHTML = doors.map(function (l) { return tileHtml(l, byLoc[l.id]); }).join('') || '<div class="yb-empty-msg">No doors set up.</div>';
-        $('ybYard').innerHTML = yard.map(function (l) { return tileHtml(l, byLoc[l.id]); }).join('') || '<div class="yb-empty-msg">No yard spots set up.</div>';
-        var used = function (list) { return list.filter(function (l) { return byLoc[l.id]; }).length; };
-        $('ybDoorCount').textContent = used(doors) + ' / ' + doors.length + ' occupied';
-        $('ybYardCount').textContent = used(yard) + ' / ' + yard.length + ' occupied';
-        $('ybIncoming').innerHTML = state.incoming.map(incomingHtml).join('') ||
-            '<div class="yb-empty-msg">Nothing expected. Add containers that are on the way so the yard can plan for them.</div>';
-        $('ybIncCount').textContent = state.incoming.length ? '(' + state.incoming.length + ')' : '';
-
-        renderChips();
-        renderAccounts();
-        renderCheckProgress();
-        prevUnitStamp = {};
-        state.units.forEach(function (u) { prevUnitStamp[u.id] = u.updated_at + '|' + u.location_id; });
+        if (rowsBuilt !== rowCount() || $('ysBody').children.length !== rowCount()) {
+            var keep = focusKey();
+            buildRows();
+            restoreFocus(keep);
+        }
+        var trs = $('ysBody').children;
+        for (var i = 0; i < trs.length; i++) paintRow(trs[i], i);
+        lastStamp = {};
+        state.units.concat(state.incoming).forEach(function (u) { lastStamp[u.id] = u.updated_at + '|' + u.location_id; });
+        summary();
+    }
+    function focusKey() {
+        var el = document.activeElement;
+        if (!el || !el.dataset || !el.dataset.f) return null;
+        return { i: el.closest('tr').dataset.i, side: el.dataset.side, f: el.dataset.f, v: el.value };
+    }
+    function restoreFocus(k) {
+        if (!k) return;
+        var el = document.querySelector('tr[data-i="' + k.i + '"] [data-side="' + k.side + '"][data-f="' + k.f + '"]');
+        if (el) { el.value = k.v; el.focus(); }
     }
 
-    function renderChips() {
-        var counts = {};
-        var overdue = 0, soon = 0, hot = 0;
-        state.units.forEach(function (u) {
-            counts[u.status] = (counts[u.status] || 0) + 1;
-            if (u.lfd_state === 'overdue') overdue++;
-            if (u.lfd_state === 'soon') soon++;
-            if (u.hot) hot++;
+    function summary() {
+        var late = 0, soon = 0, hot = 0, doors = 0, doorsUsed = 0, yard = 0, yardUsed = 0;
+        state.units.forEach(function (u) { if (u.lfd_state === 'overdue') late++; if (u.lfd_state === 'soon') soon++; if (u.hot) hot++; });
+        state.locations.forEach(function (l) {
+            var used = !!unitAt(l.id);
+            if (l.kind === 'door') { doors++; if (used) doorsUsed++; } else { yard++; if (used) yardUsed++; }
         });
-        var chips = [];
-        ['Empty', 'Loaded', 'Full', 'Working', 'Partial'].forEach(function (s) {
-            if (!counts[s]) return;
-            var c = STATUS_COLORS[s];
-            chips.push('<button type="button" class="yb-chip' + (filter.chip === s ? ' on' : '') + '" data-chip="' + s + '"><i style="width:8px;height:8px;border-radius:50%;background:' + c[1] + ';display:inline-block;"></i>' + s + ' <b>' + counts[s] + '</b></button>');
-        });
-        if (overdue) chips.push('<button type="button" class="yb-chip alert' + (filter.chip === 'overdue' ? ' on' : '') + '" data-chip="overdue">Past LFD <b>' + overdue + '</b></button>');
-        if (soon) chips.push('<button type="button" class="yb-chip warn' + (filter.chip === 'soon' ? ' on' : '') + '" data-chip="soon">LFD today/tomorrow <b>' + soon + '</b></button>');
-        if (hot) chips.push('<button type="button" class="yb-chip alert' + (filter.chip === 'hot' ? ' on' : '') + '" data-chip="hot">Hot <b>' + hot + '</b></button>');
-        if (checking) chips.push('<button type="button" class="yb-chip' + (filter.chip === 'unchecked' ? ' on' : '') + '" data-chip="unchecked">Not checked</button>');
-        $('ybChips').innerHTML = chips.join('');
-    }
-
-    function renderAccounts() {
-        var names = {};
-        state.units.concat(state.incoming).forEach(function (u) { if (u.account) names[u.account.toUpperCase()] = u.color; });
-        var sel = $('ybAccount');
-        var keys = Object.keys(names).sort();
-        sel.innerHTML = '<option value="">All accounts</option>' + keys.map(function (k) {
-            return '<option value="' + esc(k) + '"' + (filter.account === k ? ' selected' : '') + '>' + esc(k) + '</option>';
-        }).join('');
-        $('ybLegend').innerHTML = keys.map(function (k) { return '<span><i style="background:' + esc(names[k]) + '"></i>' + esc(k) + '</span>'; }).join('');
+        $('nLate').textContent = late; $('nSoon').textContent = soon; $('nHot').textContent = hot;
+        var checked = state.units.filter(function (u) { return u.checked_today; }).length;
+        $('ysCounts').textContent = 'Doors ' + doorsUsed + '/' + doors + ' · Yard ' + yardUsed + '/' + yard +
+            ' · Incoming ' + state.incoming.filter(function (u) { return !u.location_id; }).length +
+            (checking ? ' · Checked ' + checked + '/' + state.units.length : '');
         var dray = {};
         state.units.concat(state.incoming).forEach(function (u) { if (u.drayman) dray[u.drayman.toUpperCase()] = 1; });
-        $('ybDraymen').innerHTML = Object.keys(dray).sort().map(function (d) { return '<option value="' + esc(d) + '">'; }).join('');
+        $('ysDraymen').innerHTML = Object.keys(dray).sort().map(function (d) { return '<option value="' + esc(d) + '">'; }).join('');
     }
 
-    function renderCheckProgress() {
-        var done = state.units.filter(function (u) { return u.checked_today; }).length;
-        $('ybCheckProgress').innerHTML = '<b>' + done + ' / ' + state.units.length + '</b> cards checked today';
-    }
-
-    // ---------- live polling ----------
-    var pollTimer = null, lastOk = Date.now(), fullEvery = 0;
+    // ---------- live refresh ----------
+    var pollTimer = null, lastOk = Date.now(), n = 0;
     function poll(force) {
         clearTimeout(pollTimer);
         var url = BASE + 'usersc/ajax/yard_data.php?warehouse_id=' + encodeURIComponent(WAREHOUSE_ID || '') +
-            // full reload every ~2 min picks up Container Flow status changes too
-            ((force || ++fullEvery % 15 === 0) ? '' : '&since=' + encodeURIComponent(state.version));
+            ((force || ++n % 24 === 0) ? '' : '&since=' + encodeURIComponent(state.version));
         return fetch(url, { credentials: 'same-origin', cache: 'no-store' })
             .then(function (r) { return r.json(); })
-            .then(function (data) {
-                if (!data.success) throw new Error(data.message || 'error');
-                lastOk = Date.now();
-                setLive(true);
-                if (!data.unchanged) {
-                    delete data.success;
-                    state = data;
-                    render();
-                    checkEditingStale();
-                }
+            .then(function (d) {
+                if (!d.success) throw new Error(d.message);
+                lastOk = Date.now(); live(true);
+                if (!d.unchanged) { delete d.success; state = d; render(); }
             })
-            .catch(function () { setLive(false); })
+            .catch(function () { live(false); })
             .then(function () { if (!document.hidden) pollTimer = setTimeout(poll, POLL_MS); });
     }
-    function setLive(ok) {
-        var secs = Math.round((Date.now() - lastOk) / 1000);
-        $('ybLive').className = 'yb-live' + (ok ? '' : ' offline');
-        $('ybLiveText').textContent = ok ? 'Live' : 'Offline — last update ' + (secs < 60 ? secs + 's' : Math.round(secs / 60) + 'm') + ' ago';
+    function live(ok) {
+        var s = Math.round((Date.now() - lastOk) / 1000);
+        $('ysLive').className = 'ys-live' + (ok ? '' : ' off');
+        $('ysLiveText').textContent = ok ? 'Live' : 'Offline — last update ' + (s < 60 ? s + 's' : Math.round(s / 60) + 'm') + ' ago';
     }
-    document.addEventListener('visibilitychange', function () {
-        if (!document.hidden) poll(); else clearTimeout(pollTimer);
-    });
+    document.addEventListener('visibilitychange', function () { if (!document.hidden) poll(); else clearTimeout(pollTimer); });
+    setInterval(function () { if (Date.now() - lastOk > POLL_MS * 3) live(false); }, 5000);
 
-    // ---------- filters ----------
-    $('ybSearch').addEventListener('input', function () {
-        filter.q = this.value.trim().toLowerCase();
-        render();
-        if (filter.q) {
-            var first = document.querySelector('.yb-tile.match');
-            if (first && first.scrollIntoView) first.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-        }
-    });
-    $('ybAccount').addEventListener('change', function () { filter.account = this.value; render(); });
-    $('ybChips').addEventListener('click', function (e) {
-        var b = e.target.closest('[data-chip]');
-        if (!b) return;
-        filter.chip = filter.chip === b.dataset.chip ? '' : b.dataset.chip;
-        render();
-    });
-    if ($('ybWarehouse')) $('ybWarehouse').addEventListener('change', function () {
-        location.href = '?warehouse_id=' + encodeURIComponent(this.value);
-    });
+    // ---------- typing in cells ----------
+    function commit(el) {
+        var v = el.value.trim();
+        if (v === (el.dataset.orig || '')) return;
+        var tr = el.closest('tr'), side = el.dataset.side, f = el.dataset.f;
+        var u = byId(side === 'L' ? tr.dataset.unit : tr.dataset.iunit);
+        el.dataset.orig = v;
 
-    // ---------- yard check ----------
-    function setChecking(on) {
-        checking = on;
-        $('yb').classList.toggle('checking', on);
-        $('ybCheckToggle').classList.toggle('active', on);
-        if (!on && filter.chip === 'unchecked') filter.chip = '';
-        render();
-    }
-    $('ybCheckToggle').addEventListener('click', function () { setChecking(!checking); });
-    $('ybCheckDone').addEventListener('click', function () { setChecking(false); });
-
-    // ---------- clicks on the board ----------
-    function onBoardActivate(e) {
-        var pencil = e.target.closest('[data-edit]');
-        if (pencil) { openEditor(findUnit(pencil.dataset.edit)); return; }
-        var tile = e.target.closest('.yb-tile');
-        if (!tile) return;
-        var u = tile.dataset.unit ? findUnit(tile.dataset.unit) : null;
-        if (checking && u) {
-            if (u.checked_today) return;
-            u.checked_today = true;
-            tile.classList.add('checked');
-            renderCheckProgress();
-            post({ action: 'check', unit_id: u.id }).then(function (r) { if (!r.success) toast(r.message, true); });
+        if (f === 'container_number' && !v) {
+            if (!u) return;
+            if (side === 'L') {
+                post({ action: 'pickup', unit_id: u.id }).then(function (r) {
+                    afterWrite(r);
+                    if (r.success) toast(u.container_number + ' marked picked up', false, function () {
+                        post({ action: 'restore', unit_id: u.id }).then(function (r2) { afterWrite(r2, r2.success ? u.container_number + ' put back' : null); });
+                    });
+                });
+            } else {
+                post({ action: 'unlist', unit_id: u.id }).then(function (r) {
+                    afterWrite(r);
+                    if (r.success) toast(r.message, false, function () {
+                        var again = u.location_id ? { action: 'save', unit_id: u.id, on_list: 1 }
+                            : { action: 'save', unit_id: 0, container_number: u.container_number, account: u.account || '', list_note: u.list_note || '', eta: u.eta || '' };
+                        post(again).then(function (r2) { afterWrite(r2, r2.success ? 'Restored' : null); });
+                    });
+                });
+            }
             return;
         }
-        if (u) openEditor(u); else openEditor(null, +tile.dataset.loc);
+        if (!u) {
+            if (f !== 'container_number') return;
+            var data = { action: 'save', unit_id: 0, container_number: v };
+            if (side === 'L') data.location_id = tr.dataset.loc;
+            post(data).then(function (r) {
+                var where = side === 'L' ? locById(tr.dataset.loc).code : 'Incoming';
+                if (!r.success) el.dataset.orig = '';
+                afterWrite(r, r.success ? v.toUpperCase() + ' → ' + where : null);
+            });
+            return;
+        }
+        var payload = { action: 'save', unit_id: u.id };
+        payload[f] = v;
+        post(payload).then(function (r) { if (!r.success) el.dataset.orig = ''; afterWrite(r); });
     }
-    ['ybDoors', 'ybYard'].forEach(function (id) {
-        $(id).addEventListener('click', onBoardActivate);
-        $(id).addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onBoardActivate(e); } });
-    });
-    $('ybIncoming').addEventListener('click', function (e) {
-        var c = e.target.closest('[data-unit]');
-        if (c) openEditor(findUnit(c.dataset.unit));
-    });
-    $('ybIncoming').addEventListener('keydown', function (e) {
-        var c = e.target.closest('[data-unit]');
-        if (c && e.key === 'Enter') openEditor(findUnit(c.dataset.unit));
-    });
-    $('ybAddIncoming').addEventListener('click', function () { openEditor(null, null); });
 
-    // ---------- drag & drop (desktop) ----------
-    var dragUnitId = null;
-    document.addEventListener('dragstart', function (e) {
-        var el = e.target.closest && e.target.closest('[data-unit][draggable]');
-        if (!el || checking) { if (el) e.preventDefault(); return; }
-        dragUnitId = +el.dataset.unit;
-        e.dataTransfer.effectAllowed = 'move';
-        try { e.dataTransfer.setData('text/plain', String(dragUnitId)); } catch (err) {}
+    $('ysBody').addEventListener('change', function (e) {
+        if (e.target.matches('.chk')) {
+            var u = byId(e.target.closest('tr').dataset.unit);
+            if (u && e.target.checked) post({ action: 'check', unit_id: u.id }).then(function (r) { afterWrite(r); });
+            else if (u) e.target.checked = true; // a check can't be undone, it's a record of what was seen
+            return;
+        }
+        if (e.target.dataset.f) commit(e.target);
     });
-    document.addEventListener('dragend', function () {
-        dragUnitId = null;
-        document.querySelectorAll('.drop-target').forEach(function (n) { n.classList.remove('drop-target'); });
+    $('ysBody').addEventListener('keydown', function (e) {
+        var el = e.target;
+        if (!el.dataset || !el.dataset.f) return;
+        var tr = el.closest('tr');
+        if (e.key === 'Escape') { el.value = el.dataset.orig || ''; el.blur(); return; }
+        var dir = e.key === 'Enter' || (e.key === 'ArrowDown' && el.tagName !== 'SELECT') ? 1
+                : (e.key === 'ArrowUp' && el.tagName !== 'SELECT') ? -1 : 0;
+        if (!dir) return;
+        e.preventDefault();
+        if (el.tagName === 'INPUT') commit(el);
+        // next row down/up that has this column; if that cell is locked (empty row), land on its CONTAINER cell
+        var sel = '[data-side="' + el.dataset.side + '"]';
+        for (var next = tr; (next = dir > 0 ? next.nextElementSibling : next.previousElementSibling);) {
+            var target = next.querySelector(sel + '[data-f="' + el.dataset.f + '"]:not(:disabled)') || next.querySelector(sel + '[data-f="container_number"]');
+            if (target) { target.focus(); if (target.select) target.select(); break; }
+        }
     });
-    function dropZone(e) {
-        return e.target.closest && (e.target.closest('.yb-tile') || e.target.closest('#ybIncoming'));
+    $('ysBody').addEventListener('click', function (e) {
+        var btn = e.target.closest('.actbtn');
+        if (btn) {
+            var inp = btn.closest('tr').querySelector('[data-side="L"][data-f="container_number"]');
+            inp.value = '';
+            commit(inp);
+            return;
+        }
+        var grip = e.target.closest('.grip');
+        if (grip) { startPick(grip); return; }
+        if (picking) {
+            var tr = e.target.closest('tr[data-loc]');
+            if (tr && e.target.closest('td.dr')) { finishMove(picking, +tr.dataset.loc); stopPick(); }
+        }
+    });
+
+    // ---------- moving: drag & drop, or tap grip then tap a DR cell ----------
+    function unitForGrip(grip) {
+        var tr = grip.closest('tr');
+        return byId(grip.closest('td').classList.contains('inc') ? tr.dataset.iunit : tr.dataset.unit);
     }
-    document.addEventListener('dragover', function (e) {
-        if (!dragUnitId) return;
-        var z = dropZone(e);
-        if (!z) return;
-        e.preventDefault();
-        document.querySelectorAll('.drop-target').forEach(function (n) { if (n !== z) n.classList.remove('drop-target'); });
-        z.classList.add('drop-target');
-    });
-    document.addEventListener('drop', function (e) {
-        if (!dragUnitId) return;
-        var z = dropZone(e);
-        if (!z) return;
-        e.preventDefault();
-        var u = findUnit(dragUnitId);
-        dragUnitId = null;
-        z.classList.remove('drop-target');
-        if (!u) return;
-        var toLoc = z.id === 'ybIncoming' ? 0 : +z.dataset.loc;
-        if ((u.location_id || 0) === toLoc) return;
-        doMove(u, toLoc);
-    });
-
-    function doMove(u, toLoc, swap) {
+    function finishMove(u, toLoc, swap) {
+        if (!u || (u.location_id || 0) === toLoc) return Promise.resolve();
+        var occupant = toLoc ? unitAt(toLoc) : null;
+        if (occupant && !swap) {
+            if (!u.location_id) { toast(locById(toLoc).code + ' has ' + occupant.container_number + ' in it. Move that one first.', true); return Promise.resolve(); }
+            if (!confirm('Swap ' + u.container_number + ' (' + locById(u.location_id).code + ') with ' + occupant.container_number + ' (' + locById(toLoc).code + ')?')) return Promise.resolve();
+            swap = true;
+        }
         return post({ action: 'move', unit_id: u.id, location_id: toLoc, swap: swap ? 1 : 0 }).then(function (r) {
-            if (!r.success && r.occupied && u.location_id) {
-                var other = unitsByLoc()[toLoc];
-                if (confirm('Swap ' + u.container_number + ' with ' + (other ? other.container_number : 'the container') + ' in ' + (locById(toLoc) || {}).code + '?')) {
-                    return doMove(u, toLoc, true);
-                }
-                return r;
-            }
-            if (!r.success) toast(r.message, true);
-            else toast(u.container_number + ' → ' + (toLoc ? locById(toLoc).code : 'Incoming'));
-            return poll(true).then(function () { return r; });
+            return afterWrite(r, r.success ? u.container_number + ' → ' + (toLoc ? locById(toLoc).code : 'Incoming') : null);
         });
     }
-
-    // ---------- editor ----------
-    var F = ['container_number', 'status', 'account', 'driver', 'drayman', 'lfd', 'date_in', 'eta', 'mt_date', 'ld_date', 'notes'];
-    function openEditor(u, newLocId) {
-        editing = u ? JSON.parse(JSON.stringify(u)) : { id: 0, newAt: newLocId || null };
-        var onSite = u ? !!u.location_id : !!newLocId;
-        var loc = u ? locById(u.location_id) : locById(newLocId);
-        $('ybModalTitle').textContent = u ? (loc ? loc.code + ' · ' : 'Incoming · ') + u.container_number
-            : (loc ? 'Add container to ' + loc.code : 'Add incoming container');
-        F.forEach(function (k) { $('f_' + k).value = u ? (u[k] || '') : ''; });
-        $('f_status').value = u ? u.status : (onSite ? 'Full' : 'Expected');
-        $('f_hot').checked = u ? u.hot : false;
-
-        // location picker: incoming + every spot (occupied ones offer a swap)
-        var byLoc = unitsByLoc();
-        var opts = ['<option value="0">Incoming (not on site)</option>'];
-        ['door', 'yard'].forEach(function (kind) {
-            var group = state.locations.filter(function (l) { return (l.kind === 'door') === (kind === 'door'); });
-            if (!group.length) return;
-            opts.push('<optgroup label="' + (kind === 'door' ? 'Doors' : 'Yard') + '">');
-            group.forEach(function (l) {
-                var occ = byLoc[l.id];
-                var mine = u && occ && occ.id === u.id;
-                var label = l.code + (occ && !mine ? ' — ' + occ.container_number + (u && u.location_id ? ' (swap)' : ' (occupied)') : '');
-                var disabled = occ && !mine && !(u && u.location_id) ? ' disabled' : '';
-                opts.push('<option value="' + l.id + '"' + disabled + '>' + esc(label) + '</option>');
-            });
-            opts.push('</optgroup>');
-        });
-        $('f_location').innerHTML = opts.join('');
-        $('f_location').value = String(u ? (u.location_id || 0) : (newLocId || 0));
-        toggleOnsiteFields();
-
-        // Container Flow link
-        var cf = $('ybCf');
-        if (u && u.cf) {
-            cf.innerHTML = '<i class="fa fa-camera"></i> Container Flow: <b>' + esc(u.cf.type) + '</b> · ' + esc(u.cf.status.replace('_', ' ')) +
-                ' <a class="yb-btn" style="margin-left:auto;" href="' + BASE + 'usersc/container_view.php?id=' + u.cf.id + '">Open photos &amp; record →</a>';
-            cf.hidden = false;
-        } else if (u) {
-            var q = 'type=inbound&container_number=' + encodeURIComponent(u.container_number) +
-                (u.customer_id ? '&customer_id=' + u.customer_id : '') + (WAREHOUSE_ID ? '&warehouse_id=' + WAREHOUSE_ID : '');
-            cf.innerHTML = '<span style="color:#6b7280;">No Container Flow record for this number yet.</span>' +
-                ' <a class="yb-btn" style="margin-left:auto;" href="' + BASE + 'usersc/container_create.php?' + q + '"><i class="fa fa-plus"></i> Start photo record</a>';
-            cf.hidden = false;
-        } else {
-            cf.hidden = true;
-        }
-
-        $('ybMeta').textContent = u && u.updated_by ? 'Last changed by ' + u.updated_by + ' · ' + u.updated_at : '';
-        $('ybHistory').hidden = true;
-        $('ybPickup').hidden = !u || !u.location_id;
-        $('ybDelete').hidden = !u || (!!u.location_id && !IS_SUPERVISOR);
-        $('ybShowHistory').hidden = !u;
-        $('ybStale').className = 'yb-banner warn';
-        $('ybError').className = 'yb-banner err';
-        $('ybModal').classList.add('open');
-        setTimeout(function () { (u ? $('f_status') : $('f_container_number')).focus(); }, 30);
+    function startPick(grip) {
+        var u = unitForGrip(grip);
+        if (!u) return;
+        picking = u;
+        $('ysSheet').classList.add('picking');
+        $('ysMovingText').textContent = 'Moving ' + u.container_number + (u.location_id ? ' from ' + locById(u.location_id).code : '') + ' — tap the DR cell of the row to put it in.';
+        $('ysMoveIncoming').hidden = !u.location_id;
+        $('ysMoving').classList.add('show');
     }
-    function toggleOnsiteFields() {
-        var onSite = $('f_location').value !== '0';
-        document.querySelectorAll('.yb-onsite').forEach(function (n) { n.style.display = onSite ? '' : 'none'; });
-        document.querySelectorAll('.yb-incoming-only').forEach(function (n) { n.style.display = onSite ? 'none' : ''; });
-        var st = $('f_status');
-        if (onSite && st.value === 'Expected') st.value = 'Full';
-        if (!onSite && !editing.id) st.value = 'Expected';
-    }
-    $('f_location').addEventListener('change', toggleOnsiteFields);
+    function stopPick() { picking = null; $('ysSheet').classList.remove('picking'); $('ysMoving').classList.remove('show'); }
+    $('ysMoveCancel').addEventListener('click', stopPick);
+    $('ysMoveIncoming').addEventListener('click', function () { var u = picking; stopPick(); finishMove(u, 0); });
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && picking) stopPick(); });
 
-    function closeEditor() {
-        $('ybModal').classList.remove('open');
-        editing = null;
-    }
-    $('ybModal').addEventListener('click', function (e) {
-        if (e.target === this || e.target.closest('[data-close]')) closeEditor();
+    var dragU = null;
+    $('ysBody').addEventListener('dragstart', function (e) {
+        var grip = e.target.closest && e.target.closest('.grip');
+        if (!grip) return;
+        dragU = unitForGrip(grip);
+        if (!dragU) { e.preventDefault(); return; }
+        e.dataTransfer.effectAllowed = 'move';
+        try { e.dataTransfer.setData('text/plain', dragU.container_number); e.dataTransfer.setDragImage(grip.closest('td'), 10, 10); } catch (x) {}
     });
-    document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && editing) closeEditor(); });
-
-    function checkEditingStale() {
-        if (!editing || !editing.id) return;
-        var cur = findUnit(editing.id);
-        var b = $('ybStale');
-        if (!cur) {
-            b.textContent = 'This container was removed from the board by someone else.';
-            b.className = 'yb-banner warn show';
-        } else if (cur.updated_at !== editing.updated_at || cur.location_id !== editing.location_id) {
-            b.textContent = (cur.updated_by || 'Someone') + ' just changed this card. Close and reopen it to see their changes before saving.';
-            b.className = 'yb-banner warn show';
-        }
+    function clearDrop() { document.querySelectorAll('.drop,.idrop').forEach(function (n) { n.classList.remove('drop', 'idrop'); }); }
+    function dropTarget(e) {
+        var tr = e.target.closest && e.target.closest('tbody tr');
+        if (!tr) return null;
+        var inc = !!e.target.closest('td.inc');
+        if (inc) return { tr: tr, loc: 0 };
+        return tr.dataset.loc ? { tr: tr, loc: +tr.dataset.loc } : null;
     }
-    function showError(msg) { var b = $('ybError'); b.textContent = msg; b.className = 'yb-banner err show'; }
-
-    $('ybForm').addEventListener('submit', function (e) {
+    $('ysBody').addEventListener('dragover', function (e) {
+        if (!dragU) return;
+        var t = dropTarget(e);
+        if (!t || (t.loc === 0 && !dragU.location_id)) return;
         e.preventDefault();
-        if (!editing) return;
-        var data = { action: 'save', unit_id: editing.id || 0 };
-        F.forEach(function (k) { data[k] = $('f_' + k).value; });
-        data.hot = $('f_hot').checked ? 1 : 0;
-        var toLoc = +$('f_location').value;
-        if (!editing.id) data.location_id = toLoc;
-        else data.version = editing.updated_at;
-        $('ybSave').disabled = true;
-        var snap = editing;
-        post(data).then(function (r) {
-            if (!r.success) { showError(r.message); return; }
-            var moved = snap.id && (snap.location_id || 0) !== toLoc;
-            var after = moved ? doMove(snap, toLoc) : poll(true);
-            return Promise.resolve(after).then(function (mr) {
-                if (moved && mr && !mr.success) return; // doMove already toasted
-                closeEditor();
-                if (!moved) toast(snap.id ? 'Saved' : (data.container_number.toUpperCase() + (toLoc ? ' placed in ' + locById(toLoc).code : ' added to Incoming')));
-            });
-        }).then(function () { $('ybSave').disabled = false; });
+        clearDrop();
+        t.tr.classList.add(t.loc ? 'drop' : 'idrop');
     });
+    $('ysBody').addEventListener('dragleave', function (e) { if (!e.relatedTarget || !$('ysBody').contains(e.relatedTarget)) clearDrop(); });
+    $('ysBody').addEventListener('drop', function (e) {
+        if (!dragU) return;
+        var t = dropTarget(e);
+        e.preventDefault();
+        clearDrop();
+        var u = dragU; dragU = null;
+        if (t) finishMove(u, t.loc);
+    });
+    document.addEventListener('dragend', function () { dragU = null; clearDrop(); });
 
-    $('ybPickup').addEventListener('click', function () {
-        if (!editing || !editing.id) return;
-        if (!confirm('Mark ' + editing.container_number + ' as picked up? It will leave the board and go to History.')) return;
-        var u = editing;
-        post({ action: 'pickup', unit_id: u.id }).then(function (r) {
-            if (!r.success) { showError(r.message); return; }
-            closeEditor();
-            toast(r.message);
-            poll(true);
+    // ---------- toolbar ----------
+    $('ysSearch').addEventListener('input', function () {
+        filter.q = this.value.trim().toLowerCase();
+        render();
+        var hit = document.querySelector('tr.hit, tr.ihit');
+        if (filter.q && hit) hit.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    });
+    document.querySelectorAll('[data-chip]').forEach(function (b) {
+        b.addEventListener('click', function () {
+            filter.chip = filter.chip === b.dataset.chip ? '' : b.dataset.chip;
+            document.querySelectorAll('[data-chip]').forEach(function (x) { x.classList.toggle('on', x.dataset.chip === filter.chip); });
+            render();
         });
     });
-    $('ybDelete').addEventListener('click', function () {
-        if (!editing || !editing.id) return;
-        if (!confirm('Delete ' + editing.container_number + ' from the board? (Use "Picked up" for containers that left the yard.)')) return;
-        post({ action: 'delete', unit_id: editing.id }).then(function (r) {
-            if (!r.success) { showError(r.message); return; }
-            closeEditor();
-            toast('Deleted');
-            poll(true);
-        });
+    $('ysCheckToggle').addEventListener('click', function () {
+        checking = !checking;
+        this.classList.toggle('on', checking);
+        $('ysSheet').classList.toggle('checking', checking);
+        summary();
     });
-    $('ybShowHistory').addEventListener('click', function () {
-        if (!editing || !editing.id) return;
-        var box = $('ybHistory');
-        if (!box.hidden) { box.hidden = true; return; }
-        box.hidden = false;
-        box.textContent = 'Loading…';
-        fetch(BASE + 'usersc/ajax/yard_data.php?unit_history=' + editing.id, { credentials: 'same-origin' })
-            .then(function (r) { return r.json(); })
-            .then(function (d) {
-                if (!d.success) { box.textContent = d.message; return; }
-                box.innerHTML = d.events.map(function (ev) {
-                    var what = ev.action.replace('_', ' ');
-                    if (ev.from || ev.to) what += ' ' + (ev.from || '') + (ev.from && ev.to ? ' → ' : '') + (ev.to || '');
-                    return '<div><time>' + esc(ev.at) + '</time><b>' + esc(ev.by || '—') + '</b> ' + esc(what) +
-                        (ev.details ? ' <span style="color:#6b7280">' + esc(ev.details) + '</span>' : '') + '</div>';
-                }).join('') || 'No history yet.';
-            });
-    });
+    if ($('ysWarehouse')) $('ysWarehouse').addEventListener('change', function () { location.href = '?warehouse_id=' + encodeURIComponent(this.value); });
 
     render();
     pollTimer = setTimeout(poll, POLL_MS);
-    // keep the "Offline — Ns ago" label ticking
-    setInterval(function () { if (Date.now() - lastOk > POLL_MS * 2) setLive(false); }, 5000);
 })();
 </script>
 

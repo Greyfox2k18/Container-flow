@@ -171,7 +171,13 @@
 - Checked in both `container_create.php` and `ajax/container_update.php`
 
 ## Yard Board (usersc/yard_board.php, yard_history.php, yard_settings.php, includes/yard_functions.php)
-- Live replacement for the Kent T-Card Google Sheet: doors (DR01–DR14) and yard spots (F01–F47) as cards, polled every 8s via `ajax/yard_data.php` (returns `{unchanged:true}` when the board version hasn't moved, full payload every ~2 min so Container Flow status changes show too)
+- **Laid out exactly like the TODAY tab**: one row per door/yard spot with DR | CONTAINER | STATUS | DATE IN | MT DATE | LD DATE | DRIVER | ACCOUNT | LFD | Drayman | DC NOTES, and the incoming block (Container | Customer | STATUS | ETA | LOC) on the right. Sheet colours: grey header, green door labels, blue yard labels (every 3rd darker), account colour fills the row's cells, HOT = yellow container/driver cells, past LFD = red, HOT incoming STATUS = red, LOC = yellow
+- Every cell is typed into directly (Enter / ↑ / ↓ move between rows, Esc reverts). Typing a number into an empty row creates it there; typing a number that's waiting on the incoming list places that container. Clearing a CONTAINER cell = picked up (with Undo); clearing an incoming Container cell removes it from the list
+- Move by dragging the ⠿ grip onto another row (occupied row = swap, incoming block = back to Incoming). Touch screens: tap the grip, then tap the target row's DR cell
+- Incoming list = `yard_units.on_list` (+ `list_note` for its STATUS column). A container stays listed after it arrives, LOC showing where it went, like the sheet's lookup formula
+- HOT is derived from the text: "HOT" in DRIVER, DC NOTES or the incoming STATUS
+- Dates typed without a year (10/9) pick the year nearest today
+- Live replacement for the Kent T-Card Google Sheet: doors (DR01–DR14) and yard spots (F01–F47), polled every 5s via `ajax/yard_data.php` (returns `{unchanged:true}` when the board version hasn't moved, full payload every ~2 min so Container Flow status changes show too)
 - All writes go through `ajax/yard_action.php` (save / move / pickup / restore / check / delete)
 - Tables `yard_locations`, `yard_units`, `yard_events` + `customers.yard_color` are created on demand by `ensureYardTables()` — same self-migrating pattern as the SKU scan tool. DDL also in `13_yard_migration.sql`
 - One container per spot is enforced by `UNIQUE KEY uk_location (location_id)`; swaps park the occupant at NULL first

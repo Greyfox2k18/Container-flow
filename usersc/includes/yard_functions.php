@@ -83,6 +83,8 @@ function ensureYardTables() {
         drayman            VARCHAR(100) NULL,
         notes              TEXT NULL,
         eta                DATE NULL,
+        on_list            TINYINT(1) NOT NULL DEFAULT 0,
+        list_note          VARCHAR(100) NULL,
         last_location_code VARCHAR(20) NULL,
         picked_up_at       DATETIME NULL,
         picked_up_by       INT NULL,
@@ -114,6 +116,10 @@ function ensureYardTables() {
     )");
 
     yardAddColumnIfMissing('customers', 'yard_color', 'VARCHAR(7) NULL');
+    // Incoming list (right-hand block of the sheet). A container stays on it
+    // after it arrives, with LOC showing where it went, until someone clears it.
+    yardAddColumnIfMissing('yard_units', 'on_list', 'TINYINT(1) NOT NULL DEFAULT 0');
+    yardAddColumnIfMissing('yard_units', 'list_note', 'VARCHAR(100) NULL');
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -131,10 +137,17 @@ function yardParseDate($raw) {
     if ($raw === '') return null;
     if (preg_match('/^\d{4}-\d{2}-\d{2}/', $raw)) return substr($raw, 0, 10);
     if (preg_match('#^(\d{1,2})/(\d{1,2})(?:/(\d{2,4}))?#', $raw, $m)) {
-        $y = isset($m[3]) && $m[3] !== '' ? (int) $m[3] : (int) date('Y');
+        $has_year = isset($m[3]) && $m[3] !== '';
+        $y = $has_year ? (int) $m[3] : (int) date('Y');
         if ($y < 100) $y += 2000;
-        if (checkdate((int) $m[1], (int) $m[2], $y)) return sprintf('%04d-%02d-%02d', $y, $m[1], $m[2]);
-        return null;
+        if (!checkdate((int) $m[1], (int) $m[2], $y)) return null;
+        $date = sprintf('%04d-%02d-%02d', $y, $m[1], $m[2]);
+        // "1/3" typed in December means next January, "12/30" typed in January last December.
+        if (!$has_year) {
+            if ($date < date('Y-m-d', strtotime('-6 months'))) $date = sprintf('%04d-%02d-%02d', $y + 1, $m[1], $m[2]);
+            elseif ($date > date('Y-m-d', strtotime('+6 months'))) $date = sprintf('%04d-%02d-%02d', $y - 1, $m[1], $m[2]);
+        }
+        return $date;
     }
     $ts = strtotime($raw);
     return $ts ? date('Y-m-d', $ts) : null;
@@ -333,7 +346,7 @@ function yardCleanFields(array $input) {
         if (!in_array($status, YARD_STATUSES, true)) $errors[] = 'Unknown status.';
         $data['status'] = $status;
     }
-    foreach (['account' => 100, 'driver' => 100, 'drayman' => 100] as $f => $max) {
+    foreach (['account' => 100, 'driver' => 100, 'drayman' => 100, 'list_note' => 100] as $f => $max) {
         if (array_key_exists($f, $input)) {
             $v = trim((string) $input[$f]);
             $data[$f] = $v === '' ? null : mb_substr($v, 0, $max);
@@ -346,7 +359,7 @@ function yardCleanFields(array $input) {
     foreach (['date_in', 'mt_date', 'ld_date', 'lfd', 'eta'] as $f) {
         if (array_key_exists($f, $input)) $data[$f] = yardParseDate($input[$f]);
     }
-    if (array_key_exists('hot', $input)) $data['hot'] = $input['hot'] ? 1 : 0;
+    if (array_key_exists('on_list', $input)) $data['on_list'] = $input['on_list'] ? 1 : 0;
     if (array_key_exists('account', $data)) {
         $customer = yardMatchCustomer($data['account']);
         $data['customer_id'] = $customer ? (int) $customer->id : null;
@@ -356,6 +369,19 @@ function yardCleanFields(array $input) {
         $data['container_id'] = yardFindContainerFlowId($data['container_number']);
     }
     return [$data, $errors];
+}
+
+/**
+ * HOT is whatever the sheet says: "HOT" anywhere in driver, DC notes or the
+ * incoming STATUS turns the container's cells yellow.
+ */
+function yardApplyHot(array $data, $existing) {
+    $text = '';
+    foreach (['driver', 'notes', 'list_note'] as $f) {
+        $text .= ' ' . (array_key_exists($f, $data) ? $data[$f] : ($existing->$f ?? ''));
+    }
+    $data['hot'] = preg_match('/\bHOT\b/i', $text) ? 1 : 0;
+    return $data;
 }
 
 /**
@@ -399,8 +425,9 @@ function createYardUnit($warehouse_id, array $data, $location_id, $user_id) {
         if (!$location || (int) $location->warehouse_id !== (int) $warehouse_id) return [null, 'Unknown location.'];
         if (getYardUnitAtLocation($location->id)) return [null, $location->code . ' is already occupied.'];
     }
-    $data += ['status' => $location ? 'Full' : 'Expected'];
+    $data += ['status' => $location ? 'Full' : 'Expected', 'on_list' => $location ? 0 : 1];
     $data = yardAutoDates($data, null, (bool) $location);
+    $data = yardApplyHot($data, null);
     $data['warehouse_id'] = $warehouse_id ?: null;
     $data['location_id']  = $location ? (int) $location->id : null;
     $data['created_by']   = $user_id;
@@ -415,14 +442,15 @@ function createYardUnit($warehouse_id, array $data, $location_id, $user_id) {
 
 function updateYardUnit($unit, array $data, $user_id) {
     $data = yardAutoDates($data, $unit, false);
+    $data = yardApplyHot($data, $unit);
     if ($unit->location_id && ($data['status'] ?? '') === 'Expected') $data['status'] = $unit->status;
     $changes = [];
     foreach ($data as $k => $v) {
-        if ((string) ($unit->$k ?? '') !== (string) ($v ?? '') && !in_array($k, ['container_id', 'customer_id'], true)) {
+        if ((string) ($unit->$k ?? '') !== (string) ($v ?? '') && !in_array($k, ['container_id', 'customer_id', 'hot'], true)) {
             $changes[] = $k . ': ' . ($unit->$k ?? '—') . ' → ' . ($v ?? '—');
         }
     }
-    if (empty($changes)) return getYardUnitById($unit->id);
+    if (empty($changes) && (int) ($data['hot'] ?? $unit->hot) === (int) $unit->hot) return getYardUnitById($unit->id);
     $data['updated_by'] = $user_id;
     DB::getInstance()->update('yard_units', $unit->id, $data);
     $fresh = getYardUnitById($unit->id);
@@ -442,7 +470,7 @@ function moveYardUnit($unit, $to_location_id, $user_id, $swap = false) {
 
     if (!$to_location_id) {
         if (!$from) return null;
-        $db->update('yard_units', $unit->id, ['location_id' => null, 'last_location_code' => $from_code, 'updated_by' => $user_id]);
+        $db->update('yard_units', $unit->id, ['location_id' => null, 'on_list' => 1, 'last_location_code' => $from_code, 'updated_by' => $user_id]);
         logYardEvent($unit, $user_id, 'moved', $from_code, 'INCOMING');
         return null;
     }
@@ -565,6 +593,9 @@ function yardUnitToArray($u, $names, $today) {
         'lfd'              => $u->lfd,
         'lfd_state'        => $lfd_state,
         'eta'              => $u->eta,
+        'on_list'          => (bool) $u->on_list,
+        'list_note'        => $u->list_note,
+        'location_code'    => $u->location_code,
         'days_in'          => $days,
         'checked_today'    => $u->checked_at && substr($u->checked_at, 0, 10) === $today,
         'cf'               => $u->cf_id ? ['id' => (int) $u->cf_id, 'status' => $u->cf_status, 'type' => $u->cf_type] : null,
@@ -585,16 +616,17 @@ function getYardBoard($warehouse_id) {
     $params = [];
     $where = yardWarehouseWhere('yu.warehouse_id', $warehouse_id, $params);
     $units = $db->query(
-        "SELECT yu.*, cu.name AS customer_name, cu.yard_color,
+        "SELECT yu.*, cu.name AS customer_name, cu.yard_color, yl.code AS location_code,
                 c.id AS cf_id, c.status AS cf_status, c.type AS cf_type
          FROM yard_units yu
          LEFT JOIN customers cu ON cu.id = yu.customer_id
+         LEFT JOIN yard_locations yl ON yl.id = yu.location_id
          LEFT JOIN containers c ON c.id = COALESCE(yu.container_id, (
              SELECT c2.id FROM containers c2
              WHERE c2.container_number = yu.container_number AND c2.archived_at IS NULL
              ORDER BY c2.id DESC LIMIT 1))
          WHERE {$where} AND yu.picked_up_at IS NULL
-         ORDER BY yu.hot DESC, yu.eta IS NULL, yu.eta ASC, yu.created_at ASC",
+         ORDER BY yu.eta IS NULL, yu.eta ASC, yu.id ASC",
         $params
     )->results() ?: [];
 
@@ -603,7 +635,8 @@ function getYardBoard($warehouse_id) {
     $incoming = [];
     foreach ($units as $u) {
         $row = yardUnitToArray($u, $names, $today);
-        if ($u->location_id) $placed[] = $row; else $incoming[] = $row;
+        if ($u->location_id) $placed[] = $row;
+        if (!$u->location_id || $u->on_list) $incoming[] = $row;
     }
 
     return [
@@ -709,7 +742,6 @@ function importYardCsv($path, $warehouse_id, $user_id, $dry_run = true) {
         $on_board[$number] = true;
         $status = ucfirst(strtolower($fields['status']));
         $fields['status'] = in_array($status, YARD_STATUSES, true) && $status !== 'Expected' ? $status : 'Full';
-        $fields['hot'] = stripos($fields['driver'] . ' ' . $fields['notes'], 'HOT') !== false ? 1 : 0;
 
         $occupant = $loc ? getYardUnitAtLocation($loc->id) : null;
         if ($occupant && $occupant->container_number === $number) continue; // already on the board
@@ -739,19 +771,29 @@ function importYardCsv($path, $warehouse_id, $user_id, $dry_run = true) {
         if ($err) $report['skipped'][] = "{$code} {$number}: {$err}";
     }
 
-    // Incoming block: expected containers not yet on site.
+    // Incoming block: expected containers, plus hot ones already on site.
+    $listed = [];
     foreach ($incoming_rows as $r) {
         $number = yardNormalizeNumber($r['container_number']);
-        if ($number === '' || isset($on_board[$number]) || $find_open($number)) continue;
-        $on_board[$number] = true;
+        if ($number === '' || isset($listed[$number])) continue;
+        $listed[$number] = true;
         [$data] = yardCleanFields([
             'container_number' => $number,
             'account'          => $r['account'],
             'eta'              => $r['eta'],
-            'notes'            => $r['label'],
-            'hot'              => stripos($r['label'], 'HOT') !== false,
+            'list_note'        => $r['label'],
             'status'           => 'Expected',
         ]);
+        $existing = $find_open($number);
+        if ($existing || isset($on_board[$number])) {
+            // Already in the yard: keep it on the incoming list with its LOC.
+            $report['lines'][] = "Incoming list ← {$number} (already on site)";
+            if (!$dry_run && $existing) {
+                updateYardUnit($existing, ['on_list' => 1, 'list_note' => $data['list_note'], 'eta' => $data['eta']]
+                    + ($existing->account ? [] : ['account' => $data['account'], 'customer_id' => $data['customer_id']]), $user_id);
+            }
+            continue;
+        }
         $report['incoming']++;
         $report['lines'][] = "Incoming ← {$number}" . ($data['eta'] ? " (ETA {$data['eta']})" : '');
         if (!$dry_run) createYardUnit($warehouse_id, $data, null, $user_id);

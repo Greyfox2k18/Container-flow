@@ -32,6 +32,8 @@ CREATE TABLE IF NOT EXISTS yard_units (
     drayman            VARCHAR(100) NULL,
     notes              TEXT NULL,
     eta                DATE NULL,
+    on_list            TINYINT(1) NOT NULL DEFAULT 0,
+    list_note          VARCHAR(100) NULL,
     last_location_code VARCHAR(20) NULL,
     picked_up_at       DATETIME NULL,
     picked_up_by       INT NULL,
@@ -63,3 +65,6 @@ CREATE TABLE IF NOT EXISTS yard_events (
 );
 
 ALTER TABLE customers ADD COLUMN yard_color VARCHAR(7) NULL;
+
+-- Upgrading an install that already has yard_units from the first version:
+-- ALTER TABLE yard_units ADD COLUMN on_list TINYINT(1) NOT NULL DEFAULT 0, ADD COLUMN list_note VARCHAR(100) NULL;
