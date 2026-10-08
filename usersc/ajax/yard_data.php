@@ -3,7 +3,8 @@
  * Yard Board live data. Polled every few seconds by yard_board.php.
  *   ?warehouse_id=N&since=<version>  → {unchanged:true} if nothing moved,
  *                                     otherwise the full board payload.
- *   ?unit_history=ID                  → recent events for one card.
+ *   ?unit_history=ID                  → one container's timeline: gate in/out,
+ *                                       door/yard stays with in/out times, edits.
  */
 ob_start();
 error_reporting(E_ALL);
@@ -33,20 +34,7 @@ try {
             echo json_encode(['success' => false, 'message' => 'Not found']);
             exit;
         }
-        $rows = DB::getInstance()->query(
-            "SELECT e.action, e.from_code, e.to_code, e.details, e.created_at, u.fname, u.lname
-             FROM yard_events e LEFT JOIN users u ON u.id = e.user_id
-             WHERE e.unit_id = ? ORDER BY e.id DESC LIMIT 25",
-            [$history_id]
-        )->results() ?: [];
-        echo json_encode(['success' => true, 'events' => array_map(fn($r) => [
-            'action'  => $r->action,
-            'from'    => $r->from_code,
-            'to'      => $r->to_code,
-            'details' => $r->details,
-            'at'      => $r->created_at,
-            'by'      => trim(($r->fname ?? '') . ' ' . substr((string) ($r->lname ?? ''), 0, 1)),
-        ], $rows)]);
+        echo json_encode(['success' => true] + getYardUnitTimeline($unit));
         exit;
     }
 

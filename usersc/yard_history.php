@@ -4,6 +4,7 @@
  * "Move Sheet" tabs. Two views:
  *   ?view=picked  containers that have left the yard (default)
  *   ?view=moves   every place / move / swap / edit on the board
+ *   ?view=inout   door (or all spot) in/out times: one row per stay, from yard_stints
  * Both filter by text and date range and export to CSV (&export=csv).
  */
 require_once '../users/init.php';
@@ -26,7 +27,8 @@ $user_id = (int) $user->data()->id;
 ensureYardTables();
 [$warehouse_id, $warehouses] = yardResolveWarehouse($user_id, Input::get('warehouse_id'));
 
-$view = Input::get('view') === 'moves' ? 'moves' : 'picked';
+$view = in_array(Input::get('view'), ['moves', 'inout'], true) ? Input::get('view') : 'picked';
+$kind = Input::get('kind') === 'all' ? 'all' : 'door';
 $q    = trim((string) Input::get('q'));
 $from = yardParseDate(Input::get('from')) ?: date('Y-m-d', strtotime('-30 days'));
 $to   = yardParseDate(Input::get('to')) ?: date('Y-m-d');
@@ -35,9 +37,21 @@ $per_page = 100;
 
 $db = DB::getInstance();
 $params = [];
-$wh = yardWarehouseWhere($view === 'picked' ? 'yu.warehouse_id' : 'e.warehouse_id', $warehouse_id, $params);
+$wh = yardWarehouseWhere(['picked' => 'yu.warehouse_id', 'moves' => 'e.warehouse_id', 'inout' => 's.warehouse_id'][$view], $warehouse_id, $params);
 
-if ($view === 'picked') {
+if ($view === 'inout') {
+    // Any stay that overlaps the range: went in before it ended, and hadn't come out before it started.
+    $where = "{$wh} AND s.in_at < ? AND (s.out_at IS NULL OR s.out_at >= ?)";
+    $params[] = date('Y-m-d', strtotime($to . ' +1 day')) . ' 00:00:00';
+    $params[] = $from . ' 00:00:00';
+    if ($kind === 'door') $where .= " AND s.location_kind = 'door'";
+    if ($q !== '') {
+        $where .= " AND (s.container_number LIKE ? OR s.location_code LIKE ? OR s.account LIKE ?)";
+        array_push($params, ...array_fill(0, 3, '%' . $q . '%'));
+    }
+    $sql = "FROM yard_stints s LEFT JOIN users ui ON ui.id = s.in_by LEFT JOIN users uo ON uo.id = s.out_by WHERE {$where}";
+    $select = "SELECT s.*, ui.fname AS in_fname, ui.lname AS in_lname, uo.fname AS out_fname, uo.lname AS out_lname {$sql} ORDER BY s.in_at DESC, s.id DESC";
+} elseif ($view === 'picked') {
     $where = "{$wh} AND yu.picked_up_at IS NOT NULL AND yu.picked_up_at >= ? AND yu.picked_up_at < ?";
     $params[] = $from . ' 00:00:00';
     $params[] = date('Y-m-d', strtotime($to . ' +1 day')) . ' 00:00:00';
@@ -55,22 +69,39 @@ if ($view === 'picked') {
         $where .= " AND (e.container_number LIKE ? OR e.from_code LIKE ? OR e.to_code LIKE ? OR e.details LIKE ?)";
         array_push($params, ...array_fill(0, 4, '%' . $q . '%'));
     }
-    if (!Input::get('all_events')) $where .= " AND e.action IN ('placed','moved','swapped','picked_up','restored','expected','deleted')";
+    if (!Input::get('all_events')) $where .= " AND e.action IN ('placed','moved','swapped','picked_up','restored','expected','deleted','renamed')";
     $sql = "FROM yard_events e LEFT JOIN users u ON u.id = e.user_id WHERE {$where}";
     $select = "SELECT e.*, u.fname, u.lname {$sql} ORDER BY e.id DESC";
 }
 
 $who = fn($r) => trim(($r->fname ?? '') . ' ' . ($r->lname ?? ''));
+$person = fn($f, $l) => trim(($f ?? '') . ' ' . ($l ?? ''));
+/** "3h 12m" / "2d 4h" between two datetimes (or until now). */
+$dur = function ($from, $to = null) {
+    if (!$from) return '';
+    $mins = max(0, (int) round(((($to ? strtotime($to) : time())) - strtotime($from)) / 60));
+    if ($mins < 60) return $mins . 'm';
+    $h = intdiv($mins, 60);
+    return $h < 48 ? $h . 'h ' . ($mins % 60) . 'm' : intdiv($h, 24) . 'd ' . ($h % 24) . 'h';
+};
+$hours = fn($from, $to = null) => $from ? round(((($to ? strtotime($to) : time())) - strtotime($from)) / 3600, 2) : '';
+$when = fn($dt, $estimated = false) => $dt ? ($estimated ? date('n/j', strtotime($dt)) . ' (time not recorded)' : date('n/j g:ia', strtotime($dt))) : '';
 
 if ($export) {
     $rows = $db->query($select . " LIMIT 20000", $params)->results() ?: [];
     header('Content-Type: text/csv; charset=utf-8');
     header('Content-Disposition: attachment; filename="yard-' . $view . '-' . $from . '-to-' . $to . '.csv"');
     $out = fopen('php://output', 'w');
-    if ($view === 'picked') {
-        fputcsv($out, ['RETURN DATE', 'CONTAINER', 'STATUS', 'DATE IN', 'MT DATE', 'LD DATE', 'DRIVER', 'ACCOUNT', 'LFD', 'DRAYMAN', 'DC NOTES', 'LAST LOCATION', 'PICKED UP BY']);
+    if ($view === 'inout') {
+        fputcsv($out, ['SPOT', 'TYPE', 'CONTAINER', 'ACCOUNT', 'IN', 'IN BY', 'OUT', 'OUT BY', 'HOURS', 'IN TIME ESTIMATED']);
         foreach ($rows as $r) {
-            fputcsv($out, [$r->picked_up_at, $r->container_number, $r->status, $r->date_in, $r->mt_date, $r->ld_date,
+            fputcsv($out, [$r->location_code, $r->location_kind, $r->container_number, $r->account, $r->in_at, $person($r->in_fname, $r->in_lname),
+                $r->out_at, $person($r->out_fname, $r->out_lname), $hours($r->in_at, $r->out_at), $r->in_estimated ? 'yes' : '']);
+        }
+    } elseif ($view === 'picked') {
+        fputcsv($out, ['RETURN DATE', 'CONTAINER', 'STATUS', 'GATE IN', 'HOURS ON SITE', 'DATE IN', 'MT DATE', 'LD DATE', 'DRIVER', 'ACCOUNT', 'LFD', 'DRAYMAN', 'DC NOTES', 'LAST LOCATION', 'PICKED UP BY']);
+        foreach ($rows as $r) {
+            fputcsv($out, [$r->picked_up_at, $r->container_number, $r->status, $r->arrived_at, $hours($r->arrived_at, $r->picked_up_at), $r->date_in, $r->mt_date, $r->ld_date,
                 $r->driver, $r->account, $r->lfd, $r->drayman, $r->notes, $r->last_location_code, $who($r)]);
         }
     } else {
@@ -89,9 +120,9 @@ $page  = min($page, $pages);
 $rows  = $db->query($select . " LIMIT " . (($page - 1) * $per_page) . ", {$per_page}", $params)->results() ?: [];
 $csrf  = Token::generate();
 
-$qs = function ($over = []) use ($view, $q, $from, $to, $warehouse_id) {
+$qs = function ($over = []) use ($view, $q, $from, $to, $warehouse_id, $kind) {
     return '?' . http_build_query(array_filter(array_merge([
-        'view' => $view, 'q' => $q, 'from' => $from, 'to' => $to, 'warehouse_id' => $warehouse_id,
+        'view' => $view, 'q' => $q, 'from' => $from, 'to' => $to, 'warehouse_id' => $warehouse_id, 'kind' => $view === 'inout' && $kind === 'all' ? 'all' : null,
     ], $over), fn($v) => $v !== null && $v !== ''));
 };
 $fmt = fn($d) => $d ? date('n/j', strtotime($d)) : '';
@@ -128,6 +159,7 @@ $fmt = fn($d) => $d ? date('n/j', strtotime($d)) : '';
 
     <div class="yh-tabs">
         <a href="<?php echo htmlspecialchars($qs(['view' => 'picked', 'page' => null])); ?>" class="<?php echo $view === 'picked' ? 'on' : ''; ?>">Picked up</a>
+        <a href="<?php echo htmlspecialchars($qs(['view' => 'inout', 'page' => null])); ?>" class="<?php echo $view === 'inout' ? 'on' : ''; ?>">In / Out times</a>
         <a href="<?php echo htmlspecialchars($qs(['view' => 'moves', 'page' => null])); ?>" class="<?php echo $view === 'moves' ? 'on' : ''; ?>">Moves &amp; activity</a>
     </div>
 
@@ -146,6 +178,13 @@ $fmt = fn($d) => $d ? date('n/j', strtotime($d)) : '';
         <div><label>Search</label><input type="search" name="q" value="<?php echo htmlspecialchars($q); ?>" placeholder="Container, account, spot…"></div>
         <div><label>From</label><input type="date" name="from" value="<?php echo $from; ?>"></div>
         <div><label>To</label><input type="date" name="to" value="<?php echo $to; ?>"></div>
+        <?php if ($view === 'inout'): ?>
+        <div><label>Show</label>
+            <select name="kind">
+                <option value="door" <?php echo $kind === 'door' ? 'selected' : ''; ?>>Doors only</option>
+                <option value="all" <?php echo $kind === 'all' ? 'selected' : ''; ?>>Doors and yard spots</option>
+            </select></div>
+        <?php endif; ?>
         <?php if ($view === 'moves'): ?>
         <div><label style="display:flex;gap:6px;align-items:center;margin-bottom:9px;"><input type="checkbox" name="all_events" value="1" <?php echo Input::get('all_events') ? 'checked' : ''; ?> style="min-height:0;"> Include edits</label></div>
         <?php endif; ?>
@@ -155,9 +194,26 @@ $fmt = fn($d) => $d ? date('n/j', strtotime($d)) : '';
 
     <div class="yh-table-wrap">
         <table class="yh-table">
-        <?php if ($view === 'picked'): ?>
+        <?php if ($view === 'inout'): ?>
+            <thead><tr><th>Spot</th><th>Container</th><th>Account</th><th>In</th><th>Out</th><th>Time there</th><th>In by</th><th>Out by</th></tr></thead>
+            <tbody>
+            <?php foreach ($rows as $r): ?>
+                <tr>
+                    <td><b><?php echo htmlspecialchars($r->location_code); ?></b></td>
+                    <td class="yh-num"><?php echo htmlspecialchars($r->container_number); ?></td>
+                    <td><?php echo htmlspecialchars($r->account ?? ''); ?></td>
+                    <td style="white-space:nowrap;"><?php echo $when($r->in_at, $r->in_estimated); ?></td>
+                    <td style="white-space:nowrap;"><?php echo $r->out_at ? $when($r->out_at) : '<b>Still there</b>'; ?></td>
+                    <td style="white-space:nowrap;"><?php echo ($r->in_estimated ? '~' : '') . $dur($r->in_at, $r->out_at); ?></td>
+                    <td class="yh-muted"><?php echo htmlspecialchars($person($r->in_fname, $r->in_lname)); ?></td>
+                    <td class="yh-muted"><?php echo htmlspecialchars($person($r->out_fname, $r->out_lname)); ?></td>
+                </tr>
+            <?php endforeach; ?>
+            <?php if (!$rows): ?><tr><td colspan="8" class="yh-muted" style="padding:20px;">Nothing went in or out<?php echo $kind === 'door' ? ' of a door' : ''; ?> in this range.</td></tr><?php endif; ?>
+            </tbody>
+        <?php elseif ($view === 'picked'): ?>
             <thead><tr>
-                <th>Picked up</th><th>Container</th><th>Status</th><th>From</th><th>Date in</th><th>MT</th><th>LD</th>
+                <th>Picked up</th><th>Container</th><th>Status</th><th>From</th><th>Gate in</th><th>On site</th><th>Date in</th><th>MT</th><th>LD</th>
                 <th>Driver</th><th>Account</th><th>LFD</th><th>Drayman</th><th>DC notes</th><th>By</th><th></th>
             </tr></thead>
             <tbody>
@@ -167,6 +223,8 @@ $fmt = fn($d) => $d ? date('n/j', strtotime($d)) : '';
                     <td class="yh-num"><?php echo htmlspecialchars($r->container_number); ?></td>
                     <td><?php echo htmlspecialchars($r->status); ?></td>
                     <td><?php echo htmlspecialchars($r->last_location_code ?? ''); ?></td>
+                    <td style="white-space:nowrap;"><?php echo $r->arrived_at ? date('n/j g:ia', strtotime($r->arrived_at)) : ''; ?></td>
+                    <td style="white-space:nowrap;"><?php echo $dur($r->arrived_at, $r->picked_up_at); ?></td>
                     <td><?php echo $fmt($r->date_in); ?></td>
                     <td><?php echo $fmt($r->mt_date); ?></td>
                     <td><?php echo $fmt($r->ld_date); ?></td>
@@ -179,7 +237,7 @@ $fmt = fn($d) => $d ? date('n/j', strtotime($d)) : '';
                     <td><button type="button" class="yh-btn" data-restore="<?php echo (int) $r->id; ?>" title="Put back on the board (undo pickup)"><i class="fa fa-undo"></i></button></td>
                 </tr>
             <?php endforeach; ?>
-            <?php if (!$rows): ?><tr><td colspan="14" class="yh-muted" style="padding:20px;">No pickups in this range.</td></tr><?php endif; ?>
+            <?php if (!$rows): ?><tr><td colspan="16" class="yh-muted" style="padding:20px;">No pickups in this range.</td></tr><?php endif; ?>
             </tbody>
         <?php else: ?>
             <thead><tr><th>When</th><th>Container</th><th>Action</th><th>From</th><th>To</th><th>Details</th><th>By</th></tr></thead>

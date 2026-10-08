@@ -115,11 +115,53 @@ function ensureYardTables() {
         INDEX idx_wh_created (warehouse_id, created_at)
     )");
 
+    $stints_existed = (bool) $db->query(
+        "SELECT COUNT(*) AS c FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'yard_stints'"
+    )->first()->c;
+    // One row per stay at a door or yard spot: when it went in, when it came
+    // out, and who moved it. Door rows are the door in/out times.
+    $db->query("CREATE TABLE IF NOT EXISTS yard_stints (
+        id               INT AUTO_INCREMENT PRIMARY KEY,
+        unit_id          INT NOT NULL,
+        warehouse_id     INT NULL,
+        container_number VARCHAR(50) NOT NULL,
+        account          VARCHAR(100) NULL,
+        location_code    VARCHAR(20) NOT NULL,
+        location_kind    ENUM('door','yard') NOT NULL DEFAULT 'yard',
+        in_at            DATETIME NOT NULL,
+        out_at           DATETIME NULL,
+        in_by            INT NULL,
+        out_by           INT NULL,
+        in_estimated     TINYINT(1) NOT NULL DEFAULT 0,
+        INDEX idx_unit (unit_id),
+        INDEX idx_wh_in (warehouse_id, in_at),
+        INDEX idx_open (out_at)
+    )");
+
     yardAddColumnIfMissing('customers', 'yard_color', 'VARCHAR(7) NULL');
     // Incoming list (right-hand block of the sheet). A container stays on it
     // after it arrives, with LOC showing where it went, until someone clears it.
     yardAddColumnIfMissing('yard_units', 'on_list', 'TINYINT(1) NOT NULL DEFAULT 0');
     yardAddColumnIfMissing('yard_units', 'list_note', 'VARCHAR(100) NULL');
+    // Gate in: the moment it first landed on site (picked_up_at is gate out).
+    yardAddColumnIfMissing('yard_units', 'arrived_at', 'DATETIME NULL');
+
+    if (!$stints_existed) {
+        // Containers already on the board when tracking started: open a stay
+        // for each, dated from DATE IN, flagged as an estimate.
+        $db->query(
+            "INSERT INTO yard_stints (unit_id, warehouse_id, container_number, account, location_code, location_kind, in_at, in_estimated)
+             SELECT yu.id, yu.warehouse_id, yu.container_number, yu.account, yl.code, yl.kind,
+                    COALESCE(yu.date_in, DATE(yu.created_at)), 1
+             FROM yard_units yu JOIN yard_locations yl ON yl.id = yu.location_id
+             WHERE yu.picked_up_at IS NULL"
+        );
+        $db->query(
+            "UPDATE yard_units yu JOIN yard_stints s ON s.unit_id = yu.id
+             SET yu.arrived_at = s.in_at, yu.updated_at = yu.updated_at
+             WHERE yu.arrived_at IS NULL"
+        );
+    }
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -316,8 +358,14 @@ function yardMatchCustomer($account) {
     return DB::getInstance()->query("SELECT id, name FROM customers WHERE UPPER(name) = UPPER(?) LIMIT 1", [$account])->first();
 }
 
+/** Timestamps come from PHP so events, stays and pickups share one clock. */
+function yardNow() {
+    return date('Y-m-d H:i:s');
+}
+
 function logYardEvent($unit, $user_id, $action, $from_code = null, $to_code = null, $details = '') {
     DB::getInstance()->insert('yard_events', [
+        'created_at'       => yardNow(),
         'unit_id'          => !empty($unit->id) ? (int) $unit->id : null,
         'warehouse_id'     => $unit ? ($unit->warehouse_id ?: null) : null,
         'user_id'          => $user_id ?: null,
@@ -436,6 +484,7 @@ function createYardUnit($warehouse_id, array $data, $location_id, $user_id) {
         return [null, $location ? $location->code . ' was just taken by someone else.' : 'Could not save.'];
     }
     $unit = getYardUnitById($db->lastId());
+    if ($location) yardOpenStint($unit, $location, $user_id);
     logYardEvent($unit, $user_id, $location ? 'placed' : 'expected', null, $location->code ?? null);
     return [$unit, null];
 }
@@ -446,16 +495,38 @@ function updateYardUnit($unit, array $data, $user_id) {
     if ($unit->location_id && ($data['status'] ?? '') === 'Expected') $data['status'] = $unit->status;
     $changes = [];
     foreach ($data as $k => $v) {
-        if ((string) ($unit->$k ?? '') !== (string) ($v ?? '') && !in_array($k, ['container_id', 'customer_id', 'hot'], true)) {
-            $changes[] = $k . ': ' . ($unit->$k ?? '—') . ' → ' . ($v ?? '—');
+        if ((string) ($unit->$k ?? '') !== (string) ($v ?? '') && !in_array($k, ['container_id', 'customer_id', 'hot', 'container_number'], true)) {
+            $changes[] = yardFieldLabel($k) . ': ' . yardShowValue($k, $unit->$k ?? null) . ' → ' . yardShowValue($k, $v);
         }
     }
-    if (empty($changes) && (int) ($data['hot'] ?? $unit->hot) === (int) $unit->hot) return getYardUnitById($unit->id);
+    $renamed = isset($data['container_number']) && $data['container_number'] !== $unit->container_number;
+    if (empty($changes) && !$renamed && (int) ($data['hot'] ?? $unit->hot) === (int) $unit->hot) return getYardUnitById($unit->id);
     $data['updated_by'] = $user_id;
     DB::getInstance()->update('yard_units', $unit->id, $data);
     $fresh = getYardUnitById($unit->id);
-    logYardEvent($fresh, $user_id, 'updated', null, null, implode('; ', $changes));
+    if ($renamed) {
+        // Keep the stays findable under the corrected number.
+        DB::getInstance()->query("UPDATE yard_stints SET container_number = ? WHERE unit_id = ?", [$fresh->container_number, (int) $unit->id]);
+        logYardEvent($fresh, $user_id, 'renamed', null, null, $unit->container_number . ' → ' . $fresh->container_number);
+    }
+    if ($changes) logYardEvent($fresh, $user_id, 'updated', null, null, implode('; ', $changes));
     return $fresh;
+}
+
+/** Column names as the sheet shows them, for the change log. */
+function yardFieldLabel($field) {
+    return [
+        'status' => 'STATUS', 'date_in' => 'DATE IN', 'mt_date' => 'MT DATE', 'ld_date' => 'LD DATE',
+        'driver' => 'DRIVER', 'account' => 'ACCOUNT', 'lfd' => 'LFD', 'drayman' => 'Drayman', 'notes' => 'DC NOTES',
+        'eta' => 'ETA', 'list_note' => 'Incoming STATUS', 'on_list' => 'On incoming list',
+    ][$field] ?? $field;
+}
+
+function yardShowValue($field, $value) {
+    if ($value === null || $value === '') return '(blank)';
+    if (in_array($field, ['date_in', 'mt_date', 'ld_date', 'lfd', 'eta'], true)) return date('n/j', strtotime($value));
+    if ($field === 'on_list') return $value ? 'yes' : 'no';
+    return (string) $value;
 }
 
 /**
@@ -471,6 +542,7 @@ function moveYardUnit($unit, $to_location_id, $user_id, $swap = false) {
     if (!$to_location_id) {
         if (!$from) return null;
         $db->update('yard_units', $unit->id, ['location_id' => null, 'on_list' => 1, 'last_location_code' => $from_code, 'updated_by' => $user_id]);
+        yardCloseStint($unit->id, $user_id);
         logYardEvent($unit, $user_id, 'moved', $from_code, 'INCOMING');
         return null;
     }
@@ -495,19 +567,56 @@ function moveYardUnit($unit, $to_location_id, $user_id, $swap = false) {
     }
     if ($occupant) {
         $db->update('yard_units', $occupant->id, ['location_id' => (int) $from->id, 'last_location_code' => $to->code, 'updated_by' => $user_id]);
+        yardCloseStint($occupant->id, $user_id);
+        yardOpenStint(getYardUnitById($occupant->id), $from, $user_id);
         logYardEvent($occupant, $user_id, 'swapped', $to->code, $from->code);
     }
     $db->update('yard_units', $unit->id, ['last_location_code' => $from_code]);
+    yardCloseStint($unit->id, $user_id);
+    yardOpenStint(getYardUnitById($unit->id), $to, $user_id);
     logYardEvent($unit, $user_id, $occupant ? 'swapped' : ($placing ? 'placed' : 'moved'), $from_code ?: 'INCOMING', $to->code);
     return null;
 }
 
+/**
+ * Opens a stay at $location for $unit. During an import the real arrival
+ * time isn't known, so the stay starts at DATE IN and is marked estimated.
+ */
+function yardOpenStint($unit, $location, $user_id) {
+    $estimated = !yardAutoDatesEnabled();
+    $in_at = $estimated ? (($unit->date_in ?? null) ?: date('Y-m-d')) . ' 00:00:00' : yardNow();
+    DB::getInstance()->insert('yard_stints', [
+        'unit_id'          => (int) $unit->id,
+        'warehouse_id'     => $unit->warehouse_id ?: null,
+        'container_number' => $unit->container_number,
+        'account'          => $unit->account ?? null,
+        'location_code'    => $location->code,
+        'location_kind'    => $location->kind,
+        'in_at'            => $in_at,
+        'in_by'            => $user_id ?: null,
+        'in_estimated'     => $estimated ? 1 : 0,
+    ]);
+    if (empty($unit->arrived_at)) {
+        DB::getInstance()->query("UPDATE yard_units SET arrived_at = ?, updated_at = updated_at WHERE id = ? AND arrived_at IS NULL",
+            [$in_at, (int) $unit->id]);
+    }
+}
+
+/** Closes whatever stay is open for this unit (it left its spot). */
+function yardCloseStint($unit_id, $user_id) {
+    DB::getInstance()->query(
+        "UPDATE yard_stints SET out_at = ?, out_by = ? WHERE unit_id = ? AND out_at IS NULL",
+        [yardNow(), $user_id ?: null, (int) $unit_id]
+    );
+}
+
 function pickUpYardUnit($unit, $user_id) {
+    yardCloseStint($unit->id, $user_id);
     $from = getYardLocationById($unit->location_id);
     DB::getInstance()->update('yard_units', $unit->id, [
         'location_id'        => null,
         'last_location_code' => $from->code ?? $unit->last_location_code,
-        'picked_up_at'       => date('Y-m-d H:i:s'),
+        'picked_up_at'       => yardNow(),
         'picked_up_by'       => $user_id,
         'updated_by'         => $user_id,
     ]);
@@ -524,6 +633,7 @@ function restoreYardUnit($unit, $user_id) {
         'location_id'  => $location_id,
         'updated_by'   => $user_id,
     ]);
+    if ($location_id) yardOpenStint(getYardUnitById($unit->id), $loc, $user_id);
     logYardEvent($unit, $user_id, 'restored', null, $location_id ? $loc->code : 'INCOMING');
 }
 
@@ -533,8 +643,8 @@ function restoreYardUnit($unit, $user_id) {
  */
 function checkYardUnit($unit, $user_id) {
     DB::getInstance()->query(
-        "UPDATE yard_units SET checked_at = NOW(), checked_by = ?, updated_at = updated_at WHERE id = ?",
-        [$user_id, (int) $unit->id]
+        "UPDATE yard_units SET checked_at = ?, checked_by = ?, updated_at = updated_at WHERE id = ?",
+        [yardNow(), $user_id, (int) $unit->id]
     );
     logYardEvent($unit, $user_id, 'checked', null, null);
 }
@@ -596,6 +706,9 @@ function yardUnitToArray($u, $names, $today) {
         'on_list'          => (bool) $u->on_list,
         'list_note'        => $u->list_note,
         'location_code'    => $u->location_code,
+        'arrived_at'       => $u->arrived_at,
+        'spot_since'       => $u->spot_since,
+        'spot_estimated'   => (bool) $u->spot_estimated,
         'days_in'          => $days,
         'checked_today'    => $u->checked_at && substr($u->checked_at, 0, 10) === $today,
         'cf'               => $u->cf_id ? ['id' => (int) $u->cf_id, 'status' => $u->cf_status, 'type' => $u->cf_type] : null,
@@ -617,10 +730,12 @@ function getYardBoard($warehouse_id) {
     $where = yardWarehouseWhere('yu.warehouse_id', $warehouse_id, $params);
     $units = $db->query(
         "SELECT yu.*, cu.name AS customer_name, cu.yard_color, yl.code AS location_code,
+                st.in_at AS spot_since, st.in_estimated AS spot_estimated,
                 c.id AS cf_id, c.status AS cf_status, c.type AS cf_type
          FROM yard_units yu
          LEFT JOIN customers cu ON cu.id = yu.customer_id
          LEFT JOIN yard_locations yl ON yl.id = yu.location_id
+         LEFT JOIN yard_stints st ON st.unit_id = yu.id AND st.out_at IS NULL
          LEFT JOIN containers c ON c.id = COALESCE(yu.container_id, (
              SELECT c2.id FROM containers c2
              WHERE c2.container_number = yu.container_number AND c2.archived_at IS NULL
@@ -645,6 +760,55 @@ function getYardBoard($warehouse_id) {
         'locations' => $locations,
         'units'     => $placed,
         'incoming'  => $incoming,
+    ];
+}
+
+/**
+ * Everything recorded for one container: gate in/out, each stay at a door
+ * or yard spot with in/out times, and every edit with who and when.
+ */
+function getYardUnitTimeline($unit) {
+    $db = DB::getInstance();
+    $stints = $db->query(
+        "SELECT s.*, ui.fname AS in_fname, ui.lname AS in_lname, uo.fname AS out_fname, uo.lname AS out_lname
+         FROM yard_stints s
+         LEFT JOIN users ui ON ui.id = s.in_by
+         LEFT JOIN users uo ON uo.id = s.out_by
+         WHERE s.unit_id = ? ORDER BY s.in_at ASC, s.id ASC",
+        [(int) $unit->id]
+    )->results() ?: [];
+    $events = $db->query(
+        "SELECT e.action, e.from_code, e.to_code, e.details, e.created_at, u.fname, u.lname
+         FROM yard_events e LEFT JOIN users u ON u.id = e.user_id
+         WHERE e.unit_id = ? AND e.action != 'checked' ORDER BY e.id DESC LIMIT 200",
+        [(int) $unit->id]
+    )->results() ?: [];
+    $name = fn($f, $l) => trim(($f ?? '') . ' ' . substr((string) ($l ?? ''), 0, 1));
+    $location = getYardLocationById($unit->location_id);
+    return [
+        'container_number' => $unit->container_number,
+        'location'         => $location->code ?? null,
+        'date_in'          => $unit->date_in,
+        'arrived_at'       => $unit->arrived_at,
+        'picked_up_at'     => $unit->picked_up_at,
+        'now'              => yardNow(),
+        'stints'           => array_map(fn($s) => [
+            'code'      => $s->location_code,
+            'kind'      => $s->location_kind,
+            'in_at'     => $s->in_at,
+            'out_at'    => $s->out_at,
+            'estimated' => (bool) $s->in_estimated,
+            'in_by'     => $name($s->in_fname, $s->in_lname),
+            'out_by'    => $name($s->out_fname, $s->out_lname),
+        ], $stints),
+        'events'           => array_map(fn($r) => [
+            'action'  => $r->action,
+            'from'    => $r->from_code,
+            'to'      => $r->to_code,
+            'details' => $r->details,
+            'at'      => $r->created_at,
+            'by'      => $name($r->fname, $r->lname),
+        ], $events),
     ];
 }
 

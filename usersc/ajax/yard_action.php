@@ -129,6 +129,7 @@ try {
             if (!$unit) yard_respond(false, 'Missing card.');
             $is_incoming = !$unit->location_id && !$unit->picked_up_at;
             if (!$is_incoming && !isSupervisor()) yard_respond(false, 'Only supervisors can delete containers that have been on site. Use "Picked up" instead.');
+            yardCloseStint($unit->id, $user_id);
             logYardEvent($unit, $user_id, 'deleted', $unit->last_location_code, null, 'Deleted ' . $unit->container_number);
             DB::getInstance()->delete('yard_units', (int) $unit->id);
             yard_respond(true, 'Deleted');

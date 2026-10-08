@@ -69,7 +69,7 @@ table.ys { border-collapse:separate; border-spacing:0; font-size:13.3px; font-we
 .ys td.c-container { position:relative; }
 .ys .grip { position:absolute; left:0; top:0; bottom:0; width:12px; cursor:grab; color:#80868b; font-size:10px; line-height:22px; display:none; user-select:none; }
 .ys tr.has .c-container:hover .grip, .ys tr.inc-has .c-icontainer:hover .grip, .ys .grip:focus { display:block; }
-@media (hover: none) { .ys tr.has .c-container .grip, .ys tr.inc-has .c-icontainer .grip { display:block; } .ys tr.has .actbtn { display:block; } }
+@media (hover: none) { .ys tr.has .c-container .grip, .ys tr.inc-has .c-icontainer .grip { display:block; } .ys tr.has .actbtn { visibility:visible; } }
 .ys td.c-icontainer { position:relative; }
 .ys td.c-container input, .ys td.c-icontainer input { padding:0 12px; }
 /* Container Flow photo record: a corner marker like a Sheets note */
@@ -87,11 +87,14 @@ table.ys { border-collapse:separate; border-spacing:0; font-size:13.3px; font-we
 .ys tr.idrop td.inc { box-shadow:inset 0 2px 0 var(--sel), inset 0 -2px 0 var(--sel); }
 .ys tr.flash td:not(.dr):not(.gap) { animation:ysFlash 1.8s ease-out; }
 @keyframes ysFlash { 0% { background-color:#fde293; } }
-.ys td.act { width:28px; }
-.ys .actbtn { border:0; background:none; cursor:pointer; color:#80868b; font:inherit; font-size:13px; width:100%; height:21px; display:none; }
-.ys tr.has:hover .actbtn, .ys .actbtn:focus { display:block; }
-.ys .actbtn:hover { color:#d93025; }
-.ys-sheet.checking .ys .actbtn { display:none !important; }
+.ys td.act { width:48px; }
+.ys .acts { display:flex; height:21px; }
+.ys .actbtn { border:0; background:none; cursor:pointer; color:#80868b; font:inherit; font-size:13px; flex:1; height:21px; padding:0; visibility:hidden; }
+.ys tr.has:hover .actbtn, .ys .actbtn:focus { visibility:visible; }
+.ys .actbtn.pick:hover { color:#d93025; }
+.ys .actbtn.hist:hover { color:#1a73e8; }
+.ys td.c-loc { cursor:pointer; }
+.ys-sheet.checking .ys .acts { display:none; }
 .ys .chk { display:none; width:15px; height:15px; margin:3px auto; cursor:pointer; }
 .ys-sheet.checking .ys tr.has .chk { display:block; }
 .ys-moving { display:none; position:sticky; top:0; z-index:5; background:#e8f0fe; border:1px solid var(--sel); color:#174ea6; padding:6px 10px; font-size:13px; margin-bottom:6px; border-radius:4px; }
@@ -104,6 +107,28 @@ table.ys { border-collapse:separate; border-spacing:0; font-size:13.3px; font-we
 .ys-toast.err { background:#b3261e; }
 .ys-toast button { font:inherit; font-weight:700; color:#8ab4f8; background:none; border:0; cursor:pointer; padding:0; }
 .ys-empty { padding:24px; text-align:center; border:1px dashed #c0c0c0; background:var(--paper); margin-bottom:12px; font-weight:400; }
+.ys-hist { --paper:#fff; --muted:#5f6368; --door:#93c47d; --yard:#6fa8dc; color:#000; font-family:Arial, Helvetica, sans-serif; }
+.ys-hist { position:fixed; top:0; right:0; bottom:0; width:min(460px, 100vw); background:var(--paper); box-shadow:-4px 0 18px rgba(0,0,0,.18); z-index:1090; display:none; flex-direction:column; font-weight:400; }
+.ys-hist.open { display:flex; }
+.ys-hist header { display:flex; align-items:center; gap:10px; padding:14px 16px; border-bottom:1px solid #dadce0; }
+.ys-hist header h2 { margin:0; font-size:17px; font-weight:700; flex:1; font-variant-numeric:tabular-nums; }
+.ys-hist header button { border:0; background:none; font-size:24px; line-height:1; cursor:pointer; color:var(--muted); }
+.ys-hist .body { overflow:auto; padding:12px 16px 24px; font-size:13px; }
+.ys-hist h3 { font-size:11.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--muted); margin:16px 0 6px; }
+.ys-gate { display:grid; grid-template-columns:auto 1fr; gap:4px 14px; }
+.ys-gate dt { color:var(--muted); }
+.ys-gate dd { margin:0; font-weight:700; font-variant-numeric:tabular-nums; }
+.ys-stays { width:100%; border-collapse:collapse; font-variant-numeric:tabular-nums; }
+.ys-stays th { text-align:left; font-size:11px; color:var(--muted); font-weight:700; padding:4px 6px; border-bottom:1px solid #dadce0; }
+.ys-stays td { padding:5px 6px; border-bottom:1px solid #f1f3f4; vertical-align:top; }
+.ys-stays .code { font-weight:700; padding:1px 6px; border-radius:3px; background:var(--yard); }
+.ys-stays .code.door { background:var(--door); }
+.ys-stays .est { color:var(--muted); font-size:11px; }
+.ys-log { list-style:none; margin:0; padding:0; }
+.ys-log li { padding:6px 0; border-bottom:1px solid #f1f3f4; display:grid; grid-template-columns:96px 1fr; gap:2px 10px; }
+.ys-log time { color:var(--muted); font-variant-numeric:tabular-nums; grid-row:span 2; }
+.ys-log b { font-weight:700; }
+.ys-log .who { color:var(--muted); font-size:12px; }
 @media (max-width:600px) { .ys-tabs { margin-left:0; } .ys-wrap { max-height:none; } }
 @media (prefers-reduced-motion: reduce) { .ys tr.flash td { animation:none; } }
 </style>
@@ -123,6 +148,7 @@ table.ys { border-collapse:separate; border-spacing:0; font-size:13.3px; font-we
         <nav class="ys-tabs" aria-label="Yard sheets">
             <a class="ys-tab on" href="yard_board.php<?php echo $wh_qs; ?>" aria-current="page">TODAY</a>
             <a class="ys-tab" href="yard_history.php<?php echo $wh_qs; ?>">Picked Up</a>
+            <a class="ys-tab" href="yard_history.php?view=inout<?php echo $warehouse_id ? '&warehouse_id=' . (int) $warehouse_id : ''; ?>">In / Out</a>
             <a class="ys-tab" href="yard_history.php?view=moves<?php echo $warehouse_id ? '&warehouse_id=' . (int) $warehouse_id : ''; ?>">Move Sheet</a>
             <a class="ys-tab" href="container_dashboard.php">Containers</a>
             <?php if ($is_supervisor): ?><a class="ys-tab" href="yard_settings.php<?php echo $wh_qs; ?>">Setup</a><?php endif; ?>
@@ -156,14 +182,14 @@ table.ys { border-collapse:separate; border-spacing:0; font-size:13.3px; font-we
             <colgroup>
                 <col style="width:52px"><col style="width:132px"><col style="width:84px"><col style="width:62px"><col style="width:66px"><col style="width:64px">
                 <col style="width:190px"><col style="width:140px"><col style="width:50px"><col style="width:88px"><col style="width:160px">
-                <col style="width:28px">
+                <col style="width:48px">
                 <col style="width:132px"><col style="width:132px"><col style="width:190px"><col style="width:50px"><col style="width:52px">
             </colgroup>
             <thead>
                 <tr>
                     <th class="dr">DR</th><th>CONTAINER</th><th>STATUS</th><th>DATE IN</th><th>MT DATE</th><th>LD DATE</th>
                     <th>DRIVER</th><th>ACCOUNT</th><th>LFD</th><th>Drayman</th><th>DC NOTES</th>
-                    <th class="gap" title="Picked up / yard check"></th>
+                    <th class="gap" title="History / picked up / yard check"></th>
                     <th class="inc">Container</th><th class="inc">Customer</th><th class="inc">STATUS</th><th class="inc">ETA</th><th class="inc">LOC</th>
                 </tr>
             </thead>
@@ -175,6 +201,7 @@ table.ys { border-collapse:separate; border-spacing:0; font-size:13.3px; font-we
         Type a container number into an empty row to put it there, or into the blue Container column to add one that's on the way.
         Grab the <b>⠿</b> grip next to a container number to drag it to another row (drop it on an occupied row to swap).
         On a phone, tap the grip, then tap the DR cell of the row to move it to. Clear a CONTAINER cell, or use ⇥, when a container is picked up.
+        Every change is recorded with who and when: use ◷ on a row (or click LOC in the incoming block) to see a container's gate in/out and door in/out times.
     </p>
 </div>
 </div>
@@ -182,6 +209,10 @@ table.ys { border-collapse:separate; border-spacing:0; font-size:13.3px; font-we
 <datalist id="ysAccounts"><?php foreach ($customers as $c): ?><option value="<?php echo htmlspecialchars($c->name); ?>"><?php endforeach; ?></datalist>
 <datalist id="ysDraymen"></datalist>
 <datalist id="ysLabels"><option value="HOT CONTAINER"><option value="DROP SHIP CONTAINER"></datalist>
+<aside class="ys-hist" id="ysHist" aria-labelledby="ysHistTitle">
+    <header><h2 id="ysHistTitle">History</h2><button type="button" id="ysHistClose" aria-label="Close">&times;</button></header>
+    <div class="body" id="ysHistBody"></div>
+</aside>
 <div class="ys-toast" id="ysToast" role="status" aria-live="polite"><span id="ysToastText"></span><button type="button" id="ysToastUndo" hidden>UNDO</button></div>
 
 <script>
@@ -203,6 +234,20 @@ table.ys { border-collapse:separate; border-spacing:0; font-size:13.3px; font-we
     // ---------- helpers ----------
     function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
     function md(d) { if (!d) return ''; var p = d.split('-'); return (+p[1]) + '/' + (+p[2]); }
+    function stamp(dt) {
+        if (!dt) return '';
+        var d = dt.slice(0, 10).split('-'), t = dt.slice(11, 16).split(':'), h = +t[0];
+        return (+d[1]) + '/' + (+d[2]) + ' ' + ((h % 12) || 12) + ':' + t[1] + (h < 12 ? 'am' : 'pm');
+    }
+    function toDate(dt) { return new Date(dt.replace(' ', 'T')); }
+    function span(from, to) {
+        var mins = Math.max(0, Math.round(((to ? toDate(to) : new Date()) - toDate(from)) / 60000));
+        if (mins < 60) return mins + 'm';
+        var h = Math.floor(mins / 60);
+        if (h < 48) return h + 'h ' + (mins % 60) + 'm';
+        return Math.floor(h / 24) + 'd ' + (h % 24) + 'h';
+    }
+    function ago(dt) { return span(dt, null); }
     function byId(id) { id = +id; return state.units.concat(state.incoming).filter(function (u) { return u.id === id; })[0] || null; }
     function locById(id) { return state.locations.filter(function (l) { return l.id === +id; })[0] || null; }
     function unitAt(locId) { return state.units.filter(function (u) { return u.location_id === locId; })[0] || null; }
@@ -278,7 +323,9 @@ table.ys { border-collapse:separate; border-spacing:0; font-size:13.3px; font-we
                 '<td class="dr">' + (loc ? esc(loc.code) : '') + '</td>' +
                 (loc ? LEFT.map(function (c) { return cellHtml(c, 'L'); }).join('')
                      : LEFT.map(function () { return '<td></td>'; }).join('')) +
-                '<td class="gap act">' + (loc ? '<button type="button" class="actbtn" title="Picked up" aria-label="Picked up">⇥</button><input type="checkbox" class="chk" title="Seen in yard check" aria-label="Seen">' : '') + '</td>' +
+                '<td class="gap act">' + (loc ? '<span class="acts"><button type="button" class="actbtn hist" title="History: in/out times and changes" aria-label="History">&#9719;</button>' +
+                    '<button type="button" class="actbtn pick" title="Picked up" aria-label="Picked up">&#8677;</button></span>' +
+                    '<input type="checkbox" class="chk" title="Seen in yard check" aria-label="Seen">' : '') + '</td>' +
                 RIGHT.map(function (c) { return cellHtml(c, 'R'); }).join('') +
                 '<td class="inc c-loc"></td></tr>');
         }
@@ -333,6 +380,11 @@ table.ys { border-collapse:separate; border-spacing:0; font-size:13.3px; font-we
                     td.title = u ? (u.updated_by ? 'Last changed by ' + u.updated_by + ' · ' + u.updated_at : '') : 'Type a container number to put it in ' + loc.code;
                 }
             });
+            tr.children[0].title = u && u.spot_since
+                ? loc.code + ': ' + u.container_number + ' since ' + (u.spot_estimated ? md(u.spot_since.slice(0, 10)) + ' (time not recorded)' : stamp(u.spot_since)) + ' · ' + ago(u.spot_since)
+                : loc.code;
+            var dateInTd = tr.children[3];
+            dateInTd.title = u && u.arrived_at ? 'Gate in ' + stamp(u.arrived_at) : '';
             var chk = tr.querySelector('.chk');
             if (chk) chk.checked = !!(u && u.checked_today);
         }
@@ -348,6 +400,7 @@ table.ys { border-collapse:separate; border-spacing:0; font-size:13.3px; font-we
             td.classList.toggle('hotlabel', !!(iu && c.f === 'list_note' && /\bHOT\b/i.test(iu.list_note || '')));
         });
         var locTd = rtd[base + RIGHT.length];
+        locTd.title = iu ? 'History for ' + iu.container_number : '';
         locTd.textContent = iu && iu.location_code ? iu.location_code : '';
         locTd.classList.toggle('locset', !!(iu && iu.location_code));
 
@@ -504,7 +557,11 @@ table.ys { border-collapse:separate; border-spacing:0; font-size:13.3px; font-we
         }
     });
     $('ysBody').addEventListener('click', function (e) {
-        var btn = e.target.closest('.actbtn');
+        var hist = e.target.closest('.actbtn.hist');
+        if (hist) { openHistory(hist.closest('tr').dataset.unit); return; }
+        var locCell = e.target.closest('td.c-loc');
+        if (locCell && locCell.closest('tr').dataset.iunit) { openHistory(locCell.closest('tr').dataset.iunit); return; }
+        var btn = e.target.closest('.actbtn.pick');
         if (btn) {
             var inp = btn.closest('tr').querySelector('[data-side="L"][data-f="container_number"]');
             inp.value = '';
@@ -585,6 +642,48 @@ table.ys { border-collapse:separate; border-spacing:0; font-size:13.3px; font-we
         if (t) finishMove(u, t.loc);
     });
     document.addEventListener('dragend', function () { dragU = null; clearDrop(); });
+
+    // ---------- history: gate in/out, door & yard stays, every change ----------
+    var ACTIONS = { placed: 'Put in', moved: 'Moved', swapped: 'Swapped', picked_up: 'Picked up (gate out)', restored: 'Pickup undone',
+        expected: 'Added to Incoming', updated: 'Edited', renamed: 'Container # changed', deleted: 'Removed' };
+    function openHistory(unitId) {
+        if (!unitId) return;
+        var panel = $('ysHist');
+        $('ysHistTitle').textContent = (byId(unitId) || {}).container_number || 'History';
+        $('ysHistBody').innerHTML = '<p style="color:#5f6368">Loading…</p>';
+        panel.classList.add('open');
+        $('ysHistClose').focus();
+        fetch(BASE + 'usersc/ajax/yard_data.php?unit_history=' + encodeURIComponent(unitId), { credentials: 'same-origin' })
+            .then(function (r) { return r.json(); })
+            .then(function (h) {
+                if (!h.success) { $('ysHistBody').textContent = h.message; return; }
+                $('ysHistTitle').textContent = h.container_number;
+                var gateEstimated = h.arrived_at && h.stints.length && h.stints[0].estimated && h.stints[0].in_at === h.arrived_at;
+                var gate = '<dl class="ys-gate">' +
+                    '<dt>Gate in</dt><dd>' + (h.arrived_at ? (gateEstimated ? md(h.arrived_at.slice(0, 10)) + ' <span class="est">(time not recorded)</span>' : stamp(h.arrived_at))
+                        : (h.date_in ? md(h.date_in) : 'Not arrived yet')) + '</dd>' +
+                    '<dt>Gate out</dt><dd>' + (h.picked_up_at ? stamp(h.picked_up_at) : (h.location ? 'Still on site at ' + esc(h.location) : '—')) + '</dd>' +
+                    (h.arrived_at ? '<dt>' + (h.picked_up_at ? 'Time on site' : 'On site for') + '</dt><dd>' + span(h.arrived_at, h.picked_up_at) + '</dd>' : '') +
+                    '</dl>';
+                var stays = h.stints.length ? '<table class="ys-stays"><thead><tr><th>Spot</th><th>In</th><th>Out</th><th>Time there</th></tr></thead><tbody>' +
+                    h.stints.map(function (s) {
+                        return '<tr><td><span class="code ' + s.kind + '">' + esc(s.code) + '</span></td>' +
+                            '<td>' + (s.estimated ? md(s.in_at.slice(0, 10)) + '<div class="est">time not recorded</div>' : stamp(s.in_at) + (s.in_by ? '<div class="est">' + esc(s.in_by) + '</div>' : '')) + '</td>' +
+                            '<td>' + (s.out_at ? stamp(s.out_at) + (s.out_by ? '<div class="est">' + esc(s.out_by) + '</div>' : '') : '<b>now</b>') + '</td>' +
+                            '<td>' + (s.estimated ? '~' : '') + span(s.in_at, s.out_at) + '</td></tr>';
+                    }).join('') + '</tbody></table>' : '<p style="color:#5f6368">Hasn\'t been in a door or yard spot yet.</p>';
+                var log = '<ul class="ys-log">' + h.events.map(function (ev) {
+                    var what = ACTIONS[ev.action] || ev.action;
+                    if (ev.from || ev.to) what += ' ' + (ev.from ? esc(ev.from) : '') + (ev.from && ev.to ? ' → ' : '') + (ev.to ? esc(ev.to) : '');
+                    return '<li><time>' + stamp(ev.at) + '</time><b>' + what + '</b>' +
+                        '<span class="who">' + (ev.details ? esc(ev.details) + ' · ' : '') + esc(ev.by || 'system') + '</span></li>';
+                }).join('') + '</ul>';
+                $('ysHistBody').innerHTML = gate + '<h3>Doors &amp; yard spots</h3>' + stays + '<h3>Every change</h3>' + log;
+            })
+            .catch(function () { $('ysHistBody').textContent = 'Could not load the history. Check your connection.'; });
+    }
+    $('ysHistClose').addEventListener('click', function () { $('ysHist').classList.remove('open'); });
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape') $('ysHist').classList.remove('open'); });
 
     // ---------- toolbar ----------
     $('ysSearch').addEventListener('input', function () {

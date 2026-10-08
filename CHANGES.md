@@ -175,7 +175,12 @@
 - Every cell is typed into directly (Enter / ↑ / ↓ move between rows, Esc reverts). Typing a number into an empty row creates it there; typing a number that's waiting on the incoming list places that container. Clearing a CONTAINER cell = picked up (with Undo); clearing an incoming Container cell removes it from the list
 - Move by dragging the ⠿ grip onto another row (occupied row = swap, incoming block = back to Incoming). Touch screens: tap the grip, then tap the target row's DR cell
 - Incoming list = `yard_units.on_list` (+ `list_note` for its STATUS column). A container stays listed after it arrives, LOC showing where it went, like the sheet's lookup formula
-- HOT is derived from the text: "HOT" in DRIVER, DC NOTES or the incoming STATUS
+- **In/out tracking**: `yard_stints` holds one row per stay at a door or yard spot (in_at/out_at, in_by/out_by). Opened on place/move/swap/restore, closed on move/swap/pickup/delete. `yard_units.arrived_at` = gate in, `picked_up_at` = gate out. All timestamps come from PHP (`yardNow()`) so they share one clock
+- Upgrading: the first page load creates `yard_stints` and opens a stay for everything already on the board, dated from DATE IN and flagged `in_estimated` ("time not recorded"); imports do the same
+- Edits are logged per save with sheet column names (`DRIVER: (blank) → SISI`); a container # change is its own `renamed` event, and its stays follow the new number
+- Board: ◷ on each row (or LOC in the incoming block) opens the history panel: gate in/out, time on site, every door/yard stay with in/out times and who, and every change. Hovering the DR cell shows when the container went into that spot; hovering DATE IN shows the gate-in time
+- `yard_history.php?view=inout`: door (or all spot) in/out times with time there, CSV export; Picked Up view gains Gate in + time on site
+- - HOT is derived from the text: "HOT" in DRIVER, DC NOTES or the incoming STATUS
 - Dates typed without a year (10/9) pick the year nearest today
 - Live replacement for the Kent T-Card Google Sheet: doors (DR01–DR14) and yard spots (F01–F47), polled every 5s via `ajax/yard_data.php` (returns `{unchanged:true}` when the board version hasn't moved, full payload every ~2 min so Container Flow status changes show too)
 - All writes go through `ajax/yard_action.php` (save / move / pickup / restore / check / delete)

@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS yard_units (
     eta                DATE NULL,
     on_list            TINYINT(1) NOT NULL DEFAULT 0,
     list_note          VARCHAR(100) NULL,
+    arrived_at         DATETIME NULL,
     last_location_code VARCHAR(20) NULL,
     picked_up_at       DATETIME NULL,
     picked_up_by       INT NULL,
@@ -66,5 +67,25 @@ CREATE TABLE IF NOT EXISTS yard_events (
 
 ALTER TABLE customers ADD COLUMN yard_color VARCHAR(7) NULL;
 
+-- One row per stay at a door or yard spot: door/yard in and out times.
+CREATE TABLE IF NOT EXISTS yard_stints (
+    id               INT AUTO_INCREMENT PRIMARY KEY,
+    unit_id          INT NOT NULL,
+    warehouse_id     INT NULL,
+    container_number VARCHAR(50) NOT NULL,
+    account          VARCHAR(100) NULL,
+    location_code    VARCHAR(20) NOT NULL,
+    location_kind    ENUM('door','yard') NOT NULL DEFAULT 'yard',
+    in_at            DATETIME NOT NULL,
+    out_at           DATETIME NULL,
+    in_by            INT NULL,
+    out_by           INT NULL,
+    in_estimated     TINYINT(1) NOT NULL DEFAULT 0,
+    INDEX idx_unit (unit_id),
+    INDEX idx_wh_in (warehouse_id, in_at),
+    INDEX idx_open (out_at)
+);
+
 -- Upgrading an install that already has yard_units from the first version:
--- ALTER TABLE yard_units ADD COLUMN on_list TINYINT(1) NOT NULL DEFAULT 0, ADD COLUMN list_note VARCHAR(100) NULL;
+-- ALTER TABLE yard_units ADD COLUMN on_list TINYINT(1) NOT NULL DEFAULT 0, ADD COLUMN list_note VARCHAR(100) NULL, ADD COLUMN arrived_at DATETIME NULL;
+-- (Opening yard_board.php does this automatically, and also starts a stay for every container already on the board.)
