@@ -46,14 +46,14 @@ crontab -e
 ```
 
 ### 6b. Yard Board (door & yard tracking)
-A separate product on the same site: it doesn't need a Container Flow photo record, client or label for anything on the board. When a container number on the board also has a Container Flow record, the two link up (a corner marker on the board, a yard badge on `container_view.php`). It shares only the site login, the Supervisor permission and warehouses.
+A separate product on the same site. It shares Container Flow's **clients** (ACCOUNT is picked from the client list, and each client can have a board colour), plus the site login, the Supervisor permission and warehouses. Yard containers are **not** linked to Container Flow photo records and don't need one; if a photo record with the same container number happens to exist, the board shows a small marker linking to it and `container_view.php` shows the yard spot.
 
 No SQL to run — the yard tables are created automatically the first time anyone opens `yard_board.php`.
 1. In UserSpice admin, add `yard_board.php`, `yard_history.php` and `yard_settings.php` as pages (floor workers + supervisors for the first two, supervisors for settings).
 2. As a supervisor open **Yard Board → Setup**:
    - **Import the T-Card sheet**: in Google Sheets open the TODAY tab → File → Download → CSV, upload, check the preview, click *Import now*. Doors/yard spots are created from the sheet automatically.
    - Or add doors/spots by range (DR 1–14, F 1–47).
-   - Set account colours. The yard keeps its own account list (separate from Container Flow clients); anything typed into ACCOUNT is added to it automatically.
+   - Set client colours (Setup → Client colours). Add any missing clients under Manage Clients first; the import preview lists sheet accounts that aren't clients yet.
 3. Share `https://container-flow.com/usersc/yard_board.php` with the yard team. Every open board updates within ~5 seconds of any change. The site menu (`includes/container_navigation.php`) has separate Containers and Yard Board entries.
 
 ### 7. UserSpice page permissions

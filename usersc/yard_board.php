@@ -26,7 +26,7 @@ ensureYardTables();
 
 [$warehouse_id, $warehouses] = yardResolveWarehouse($user_id, Input::get('warehouse_id'));
 $initial   = getYardBoard($warehouse_id);
-$accounts  = getYardAccounts();
+$clients   = getYardCustomers($user_id); // Container Flow's clients, scoped to the user's warehouses
 $csrf      = Token::generate();
 $wh_qs     = $warehouse_id ? '?warehouse_id=' . (int) $warehouse_id : '';
 ?>
@@ -205,7 +205,6 @@ table.ys { border-collapse:separate; border-spacing:0; font-size:13.3px; font-we
 </div>
 </div>
 
-<datalist id="ysAccounts"><?php foreach ($accounts as $a): ?><option value="<?php echo htmlspecialchars($a->name); ?>"><?php endforeach; ?></datalist>
 <datalist id="ysDraymen"></datalist>
 <datalist id="ysLabels"><option value="HOT CONTAINER"><option value="DROP SHIP CONTAINER"></datalist>
 <aside class="ys-hist" id="ysHist" aria-labelledby="ysHistTitle">
@@ -220,6 +219,11 @@ table.ys { border-collapse:separate; border-spacing:0; font-size:13.3px; font-we
     var CSRF = <?php echo json_encode($csrf); ?>;
     var WAREHOUSE_ID = <?php echo json_encode($warehouse_id); ?>;
     var STATUSES = ['', 'Empty', 'Loaded', 'Full', 'Working', 'Partial'];
+    // ACCOUNT / Customer pick from Container Flow's clients.
+    var CLIENTS = <?php echo json_encode(array_map(fn($c) => ['id' => (int) $c->id, 'name' => $c->name], $clients)); ?>;
+    var CLIENT_OPTIONS = '<option value=""></option>' + CLIENTS.map(function (c) {
+        return '<option value="' + c.id + '">' + String(c.name).replace(/&/g, '&amp;').replace(/</g, '&lt;') + '</option>';
+    }).join('');
     var POLL_MS = 5000;
 
     var state = <?php echo json_encode($initial); ?>;
@@ -284,14 +288,14 @@ table.ys { border-collapse:separate; border-spacing:0; font-size:13.3px; font-we
         { f: 'status', input: 'select' },
         { f: 'date_in', input: 'date' }, { f: 'mt_date', input: 'date' }, { f: 'ld_date', input: 'date' },
         { f: 'driver', input: 'text' },
-        { f: 'account', input: 'text', list: 'ysAccounts' },
+        { f: 'customer_id', input: 'client' },
         { f: 'lfd', input: 'date' },
         { f: 'drayman', input: 'text', list: 'ysDraymen' },
         { f: 'notes', input: 'text', plain: true }
     ];
     var RIGHT = [
         { f: 'container_number', cls: 'c-icontainer', input: 'text' },
-        { f: 'account', input: 'text', list: 'ysAccounts' },
+        { f: 'customer_id', input: 'client' },
         { f: 'list_note', input: 'text', list: 'ysLabels' },
         { f: 'eta', input: 'date' }
     ];
@@ -301,6 +305,8 @@ table.ys { border-collapse:separate; border-spacing:0; font-size:13.3px; font-we
         var inner;
         if (c.input === 'select') {
             inner = '<select' + attrs + ' aria-label="STATUS">' + STATUSES.map(function (s) { return '<option>' + s + '</option>'; }).join('') + '</select>';
+        } else if (c.input === 'client') {
+            inner = '<select' + attrs + ' aria-label="' + (side === 'L' ? 'ACCOUNT' : 'Customer') + '">' + CLIENT_OPTIONS + '</select>';
         } else {
             inner = '<input' + attrs + (c.list ? ' list="' + c.list + '"' : '') + ' spellcheck="false" autocomplete="off"' +
                 (c.input === 'date' ? ' inputmode="numeric" placeholder=""' : '') + '>';
@@ -332,6 +338,20 @@ table.ys { border-collapse:separate; border-spacing:0; font-size:13.3px; font-we
         rowsBuilt = n;
     }
 
+    // Client dropdown value: the client id, or an account typed on the old
+    // sheet that isn't a Container Flow client yet (shown as plain text).
+    function clientVal(el, x) {
+        if (!x) return '';
+        if (x.customer_id) return String(x.customer_id);
+        if (!x.account) return '';
+        if (el && el !== document.activeElement) {
+            var opt = el.querySelector('option[value="text"]');
+            if (!opt) { opt = document.createElement('option'); opt.value = 'text'; el.appendChild(opt); }
+            opt.textContent = x.account;
+            opt.title = 'Not a Container Flow client';
+        }
+        return 'text';
+    }
     function setVal(el, v) {
         if (!el || el === document.activeElement) return; // never clobber what someone is typing
         if (el.value !== v) el.value = v;
@@ -361,7 +381,7 @@ table.ys { border-collapse:separate; border-spacing:0; font-size:13.3px; font-we
             var tds = tr.children;
             LEFT.forEach(function (c, k) {
                 var td = tds[k + 1], el = td.querySelector('input,select');
-                var v = u ? (c.input === 'date' ? md(u[c.f]) : (u[c.f] || '')) : '';
+                var v = c.input === 'client' ? clientVal(el, u) : u ? (c.input === 'date' ? md(u[c.f]) : (u[c.f] || '')) : '';
                 setVal(el, v);
                 if (c.f !== 'container_number') el.disabled = !u;
                 td.style.background = (u && !c.plain && u.account) ? u.color : '';
@@ -392,10 +412,10 @@ table.ys { border-collapse:separate; border-spacing:0; font-size:13.3px; font-we
         var rtd = tr.children;
         var base = LEFT.length + 2;
         RIGHT.forEach(function (c, k) {
-            var td = rtd[base + k], el = td.querySelector('input');
-            setVal(el, iu ? (c.input === 'date' ? md(iu[c.f]) : (iu[c.f] || '')) : '');
+            var td = rtd[base + k], el = td.querySelector('input,select');
+            setVal(el, c.input === 'client' ? clientVal(el, iu) : iu ? (c.input === 'date' ? md(iu[c.f]) : (iu[c.f] || '')) : '');
             if (c.f !== 'container_number') el.disabled = !iu;
-            td.style.background = (iu && c.f === 'account' && iu.account) ? iu.color : '';
+            td.style.background = (iu && c.f === 'customer_id' && iu.account) ? iu.color : '';
             td.classList.toggle('hotlabel', !!(iu && c.f === 'list_note' && /\bHOT\b/i.test(iu.list_note || '')));
         });
         var locTd = rtd[base + RIGHT.length];
@@ -487,7 +507,7 @@ table.ys { border-collapse:separate; border-spacing:0; font-size:13.3px; font-we
     // ---------- typing in cells ----------
     function commit(el) {
         var v = el.value.trim();
-        if (v === (el.dataset.orig || '')) return;
+        if (v === (el.dataset.orig || '') || v === 'text') return;
         var tr = el.closest('tr'), side = el.dataset.side, f = el.dataset.f;
         var u = byId(side === 'L' ? tr.dataset.unit : tr.dataset.iunit);
         el.dataset.orig = v;

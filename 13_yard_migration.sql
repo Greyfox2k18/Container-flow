@@ -63,14 +63,9 @@ CREATE TABLE IF NOT EXISTS yard_events (
     INDEX idx_wh_created (warehouse_id, created_at)
 );
 
--- The yard's own account list and colours (separate from Container Flow clients).
-CREATE TABLE IF NOT EXISTS yard_accounts (
-    id         INT AUTO_INCREMENT PRIMARY KEY,
-    name       VARCHAR(100) NOT NULL,
-    color      VARCHAR(7) NULL,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE KEY uk_name (name)
-);
+-- ACCOUNT = a Container Flow client; each client can have a board colour.
+ALTER TABLE yard_units ADD COLUMN customer_id INT NULL;
+ALTER TABLE customers ADD COLUMN yard_color VARCHAR(7) NULL;
 
 -- One row per stay at a door or yard spot: door/yard in and out times.
 CREATE TABLE IF NOT EXISTS yard_stints (

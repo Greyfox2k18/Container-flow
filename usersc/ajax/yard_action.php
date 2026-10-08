@@ -48,7 +48,7 @@ try {
     switch ($action) {
         case 'save':
             $fields = [];
-            foreach (['container_number', 'status', 'account', 'driver', 'drayman', 'notes', 'date_in', 'mt_date', 'ld_date', 'lfd', 'eta', 'list_note', 'on_list'] as $f) {
+            foreach (['container_number', 'status', 'account', 'driver', 'drayman', 'notes', 'date_in', 'mt_date', 'ld_date', 'lfd', 'eta', 'list_note', 'on_list', 'customer_id'] as $f) {
                 if (isset($_POST[$f])) $fields[$f] = $_POST[$f];
             }
             [$data, $errors] = yardCleanFields($fields);
