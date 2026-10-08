@@ -189,10 +189,11 @@
 - Edits carry `version` (= `updated_at`) and are rejected if someone else changed the card in between
 - Auto-dates on live edits only: Date In when placed, MT Date on → Empty, LD Date on → Loaded — never overwrites a typed date, disabled during CSV import
 - Yard check ticks set `checked_at` without touching `updated_at` (so they don't look like edits) and log a `checked` event so other boards refresh
-- Linked to Container Flow by container number (`container_id`, with a fallback lookup for records created later). `container_view.php` shows a yard-location badge; card editor links to the photo record or to `container_create.php` pre-filled
+- **Separate product from Container Flow photos.** Nothing on the board needs a photo record or client. The only link is by container number at read time: a corner marker on the CONTAINER cell when a Container Flow record with that number exists, and a yard badge on `container_view.php` (read-only; viewing a photo record never creates yard tables). If the photo tables don't exist at all, the board still works (`yardHasContainerFlow()`)
+- Accounts and colours live in the yard's own `yard_accounts` table (not `customers`). Typing a new name into ACCOUNT adds it; Setup renames (updating every container and stay that uses it), colours and removes unused ones. The `customers.yard_color` column from earlier drafts is no longer used
 - Delete: anyone for Incoming entries, supervisors only once a container has been on site (use Picked up instead)
 - CSV import of the sheet's TODAY tab (preview first, never overwrites an occupied spot, idempotent)
-- Links added: Yard Board button on `container_dashboard.php` (desktop + mobile), nav entry in `includes/container_navigation.php`
+- Site menu: separate Yard Board entry in `includes/container_navigation.php`. No cross-buttons between the two products' pages (`container_dashboard.php` is unchanged)
 
 ## Still outstanding
 - `container_edit.php` was never uploaded this session — warehouse picker, identifier validation, and missing-photos alert are NOT wired into it if it's a separate page from the Pro dashboard modal

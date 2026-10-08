@@ -26,7 +26,7 @@ ensureYardTables();
 
 [$warehouse_id, $warehouses] = yardResolveWarehouse($user_id, Input::get('warehouse_id'));
 $initial   = getYardBoard($warehouse_id);
-$customers = getYardCustomerColors();
+$accounts  = getYardAccounts();
 $csrf      = Token::generate();
 $wh_qs     = $warehouse_id ? '?warehouse_id=' . (int) $warehouse_id : '';
 ?>
@@ -150,7 +150,6 @@ table.ys { border-collapse:separate; border-spacing:0; font-size:13.3px; font-we
             <a class="ys-tab" href="yard_history.php<?php echo $wh_qs; ?>">Picked Up</a>
             <a class="ys-tab" href="yard_history.php?view=inout<?php echo $warehouse_id ? '&warehouse_id=' . (int) $warehouse_id : ''; ?>">In / Out</a>
             <a class="ys-tab" href="yard_history.php?view=moves<?php echo $warehouse_id ? '&warehouse_id=' . (int) $warehouse_id : ''; ?>">Move Sheet</a>
-            <a class="ys-tab" href="container_dashboard.php">Containers</a>
             <?php if ($is_supervisor): ?><a class="ys-tab" href="yard_settings.php<?php echo $wh_qs; ?>">Setup</a><?php endif; ?>
         </nav>
     </div>
@@ -197,7 +196,7 @@ table.ys { border-collapse:separate; border-spacing:0; font-size:13.3px; font-we
         </table>
     </div>
     <p class="ys-help">
-        A small blue corner on a container number links to its Container Flow photo record (green once reviewed).
+        If the same container number also has a Container Flow photo record, a small blue corner on it links there (green once reviewed).
         Type a container number into an empty row to put it there, or into the blue Container column to add one that's on the way.
         Grab the <b>⠿</b> grip next to a container number to drag it to another row (drop it on an occupied row to swap).
         On a phone, tap the grip, then tap the DR cell of the row to move it to. Clear a CONTAINER cell, or use ⇥, when a container is picked up.
@@ -206,7 +205,7 @@ table.ys { border-collapse:separate; border-spacing:0; font-size:13.3px; font-we
 </div>
 </div>
 
-<datalist id="ysAccounts"><?php foreach ($customers as $c): ?><option value="<?php echo htmlspecialchars($c->name); ?>"><?php endforeach; ?></datalist>
+<datalist id="ysAccounts"><?php foreach ($accounts as $a): ?><option value="<?php echo htmlspecialchars($a->name); ?>"><?php endforeach; ?></datalist>
 <datalist id="ysDraymen"></datalist>
 <datalist id="ysLabels"><option value="HOT CONTAINER"><option value="DROP SHIP CONTAINER"></datalist>
 <aside class="ys-hist" id="ysHist" aria-labelledby="ysHistTitle">

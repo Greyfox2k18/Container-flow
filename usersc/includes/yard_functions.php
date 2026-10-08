@@ -8,12 +8,13 @@
  *   - Move Sheet       → yard_events (every place/move/swap is logged)
  *   - Picked Up tabs   → yard_history.php (units with picked_up_at set)
  *   - Yard Check tab   → "Yard check" mode on the board (checked_at)
- *   - CUSTOMER COLORS  → customers.yard_color
+ *   - CUSTOMER COLORS  → yard_accounts (the yard's own account list)
  *
- * A yard unit is linked to its Container Flow record (containers table)
- * by container number, so the board can show photo-workflow status and
- * jump straight to container_view.php — and container_view.php can show
- * where the container is sitting in the yard.
+ * The Yard Board is its own product: it needs no Container Flow photo
+ * record, client or label for anything on the board. When a Container Flow
+ * record with the same container number happens to exist, the two are
+ * linked at read time (a corner marker on the board, a yard badge on
+ * container_view.php); nothing is stored on either side.
  *
  * Tables are created on demand by ensureYardTables(), same as the SKU
  * scan tool, so there is no separate migration to forget. The same DDL is
@@ -70,8 +71,6 @@ function ensureYardTables() {
         warehouse_id       INT NULL,
         location_id        INT NULL,
         container_number   VARCHAR(50) NOT NULL,
-        container_id       INT NULL,
-        customer_id        INT NULL,
         account            VARCHAR(100) NULL,
         status             VARCHAR(20) NOT NULL DEFAULT 'Expected',
         hot                TINYINT(1) NOT NULL DEFAULT 0,
@@ -138,7 +137,21 @@ function ensureYardTables() {
         INDEX idx_open (out_at)
     )");
 
-    yardAddColumnIfMissing('customers', 'yard_color', 'VARCHAR(7) NULL');
+    // The yard's own account list (WEYCO, PEPSI, STRYDER…) with sheet colours,
+    // independent of Container Flow's clients.
+    $accounts_existed = (bool) $db->query(
+        "SELECT COUNT(*) AS c FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'yard_accounts'"
+    )->first()->c;
+    $db->query("CREATE TABLE IF NOT EXISTS yard_accounts (
+        id         INT AUTO_INCREMENT PRIMARY KEY,
+        name       VARCHAR(100) NOT NULL,
+        color      VARCHAR(7) NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE KEY uk_name (name)
+    )");
+    if (!$accounts_existed) {
+        $db->query("INSERT IGNORE INTO yard_accounts (name) SELECT DISTINCT account FROM yard_units WHERE account IS NOT NULL AND account != ''");
+    }
     // Incoming list (right-hand block of the sheet). A container stays on it
     // after it arrives, with LOC showing where it went, until someone clears it.
     yardAddColumnIfMissing('yard_units', 'on_list', 'TINYINT(1) NOT NULL DEFAULT 0');
@@ -329,33 +342,49 @@ function getYardUnitAtLocation($location_id) {
 /** The open yard unit (not picked up) for a Container Flow container, if any. */
 function getYardUnitForContainer($container) {
     try {
-        ensureYardTables();
+        // Read-only: viewing a photo record never sets up the yard tables.
         return DB::getInstance()->query(
             "SELECT yu.*, yl.code AS location_code, yl.kind AS location_kind
              FROM yard_units yu LEFT JOIN yard_locations yl ON yl.id = yu.location_id
-             WHERE yu.picked_up_at IS NULL AND (yu.container_id = ? OR yu.container_number = ?)
+             WHERE yu.picked_up_at IS NULL AND yu.container_number = ?
              ORDER BY yu.location_id IS NULL, yu.updated_at DESC LIMIT 1",
-            [(int) $container->id, yardNormalizeNumber($container->container_number)]
+            [yardNormalizeNumber($container->container_number)]
         )->first();
     } catch (\Throwable $e) {
         return null;
     }
 }
 
-/** Most recent open Container Flow record with this number, or null. */
-function yardFindContainerFlowId($container_number) {
-    $row = DB::getInstance()->query(
-        "SELECT id FROM containers WHERE container_number = ? AND archived_at IS NULL ORDER BY id DESC LIMIT 1",
-        [$container_number]
-    )->first();
-    return $row ? (int) $row->id : null;
+/** The yard account with this name (case-insensitive), or null. */
+function yardFindAccount($name) {
+    $name = trim((string) $name);
+    if ($name === '') return null;
+    return DB::getInstance()->query("SELECT * FROM yard_accounts WHERE name = ? LIMIT 1", [$name])->first();
 }
 
-/** Match free-text account to a client (case-insensitive name). Returns the row or null. */
-function yardMatchCustomer($account) {
-    $account = trim((string) $account);
-    if ($account === '') return null;
-    return DB::getInstance()->query("SELECT id, name FROM customers WHERE UPPER(name) = UPPER(?) LIMIT 1", [$account])->first();
+/** Adds a name typed into ACCOUNT to the yard's account list so it can be given a colour. */
+function yardRememberAccount($name) {
+    $name = trim((string) $name);
+    if ($name === '') return;
+    DB::getInstance()->query("INSERT IGNORE INTO yard_accounts (name) VALUES (?)", [mb_substr($name, 0, 100)]);
+}
+
+/**
+ * Container Flow (photos) lives on the same site but is optional for the
+ * yard: everything that reads its tables checks this first.
+ */
+function yardHasContainerFlow() {
+    static $has = null;
+    if ($has === null) {
+        try {
+            $has = (bool) DB::getInstance()->query(
+                "SELECT COUNT(*) AS c FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'containers'"
+            )->first()->c;
+        } catch (\Throwable $e) {
+            $has = false;
+        }
+    }
+    return $has;
 }
 
 /** Timestamps come from PHP so events, stays and pickups share one clock. */
@@ -408,13 +437,10 @@ function yardCleanFields(array $input) {
         if (array_key_exists($f, $input)) $data[$f] = yardParseDate($input[$f]);
     }
     if (array_key_exists('on_list', $input)) $data['on_list'] = $input['on_list'] ? 1 : 0;
-    if (array_key_exists('account', $data)) {
-        $customer = yardMatchCustomer($data['account']);
-        $data['customer_id'] = $customer ? (int) $customer->id : null;
-        if ($customer) $data['account'] = $customer->name;
-    }
-    if (isset($data['container_number']) && $data['container_number'] !== '') {
-        $data['container_id'] = yardFindContainerFlowId($data['container_number']);
+    if (!empty($data['account'])) {
+        // Use the spelling already on the account list (weyco → WEYCO).
+        $known = yardFindAccount($data['account']);
+        if ($known) $data['account'] = $known->name;
     }
     return [$data, $errors];
 }
@@ -476,6 +502,7 @@ function createYardUnit($warehouse_id, array $data, $location_id, $user_id) {
     $data += ['status' => $location ? 'Full' : 'Expected', 'on_list' => $location ? 0 : 1];
     $data = yardAutoDates($data, null, (bool) $location);
     $data = yardApplyHot($data, null);
+    if (!empty($data['account'])) yardRememberAccount($data['account']);
     $data['warehouse_id'] = $warehouse_id ?: null;
     $data['location_id']  = $location ? (int) $location->id : null;
     $data['created_by']   = $user_id;
@@ -492,10 +519,11 @@ function createYardUnit($warehouse_id, array $data, $location_id, $user_id) {
 function updateYardUnit($unit, array $data, $user_id) {
     $data = yardAutoDates($data, $unit, false);
     $data = yardApplyHot($data, $unit);
+    if (!empty($data['account'])) yardRememberAccount($data['account']);
     if ($unit->location_id && ($data['status'] ?? '') === 'Expected') $data['status'] = $unit->status;
     $changes = [];
     foreach ($data as $k => $v) {
-        if ((string) ($unit->$k ?? '') !== (string) ($v ?? '') && !in_array($k, ['container_id', 'customer_id', 'hot', 'container_number'], true)) {
+        if ((string) ($unit->$k ?? '') !== (string) ($v ?? '') && !in_array($k, ['hot', 'container_number'], true)) {
             $changes[] = yardFieldLabel($k) . ': ' . yardShowValue($k, $unit->$k ?? null) . ' → ' . yardShowValue($k, $v);
         }
     }
@@ -684,7 +712,7 @@ function yardUnitToArray($u, $names, $today) {
         elseif ($u->lfd <= date('Y-m-d', strtotime($today . ' +1 day'))) $lfd_state = 'soon';
     }
     $days = $u->date_in ? (int) floor((strtotime($today) - strtotime($u->date_in)) / 86400) : null;
-    $account = $u->account ?: ($u->customer_name ?? '');
+    $account = (string) $u->account;
     return [
         'id'               => (int) $u->id,
         'location_id'      => $u->location_id ? (int) $u->location_id : null,
@@ -692,8 +720,7 @@ function yardUnitToArray($u, $names, $today) {
         'status'           => $u->status,
         'hot'              => (bool) $u->hot,
         'account'          => $account,
-        'customer_id'      => $u->customer_id ? (int) $u->customer_id : null,
-        'color'            => $u->yard_color ?: yardFallbackColor($account),
+        'color'            => $u->account_color ?: yardFallbackColor($account),
         'driver'           => $u->driver,
         'drayman'          => $u->drayman,
         'notes'            => $u->notes,
@@ -711,7 +738,7 @@ function yardUnitToArray($u, $names, $today) {
         'spot_estimated'   => (bool) $u->spot_estimated,
         'days_in'          => $days,
         'checked_today'    => $u->checked_at && substr($u->checked_at, 0, 10) === $today,
-        'cf'               => $u->cf_id ? ['id' => (int) $u->cf_id, 'status' => $u->cf_status, 'type' => $u->cf_type] : null,
+        'cf'               => !empty($u->cf_id) ? ['id' => (int) $u->cf_id, 'status' => $u->cf_status, 'type' => $u->cf_type] : null,
         'updated_at'       => $u->updated_at,
         'updated_by'       => $names[(int) $u->updated_by] ?? '',
     ];
@@ -728,18 +755,23 @@ function getYardBoard($warehouse_id) {
 
     $params = [];
     $where = yardWarehouseWhere('yu.warehouse_id', $warehouse_id, $params);
-    $units = $db->query(
-        "SELECT yu.*, cu.name AS customer_name, cu.yard_color, yl.code AS location_code,
-                st.in_at AS spot_since, st.in_estimated AS spot_estimated,
-                c.id AS cf_id, c.status AS cf_status, c.type AS cf_type
-         FROM yard_units yu
-         LEFT JOIN customers cu ON cu.id = yu.customer_id
-         LEFT JOIN yard_locations yl ON yl.id = yu.location_id
-         LEFT JOIN yard_stints st ON st.unit_id = yu.id AND st.out_at IS NULL
-         LEFT JOIN containers c ON c.id = COALESCE(yu.container_id, (
+    // Photo record link: only when a Container Flow record has this number.
+    $cf_select = $cf_join = '';
+    if (yardHasContainerFlow()) {
+        $cf_select = ", c.id AS cf_id, c.status AS cf_status, c.type AS cf_type";
+        $cf_join = "LEFT JOIN containers c ON c.id = (
              SELECT c2.id FROM containers c2
              WHERE c2.container_number = yu.container_number AND c2.archived_at IS NULL
-             ORDER BY c2.id DESC LIMIT 1))
+             ORDER BY c2.id DESC LIMIT 1)";
+    }
+    $units = $db->query(
+        "SELECT yu.*, ya.color AS account_color, yl.code AS location_code,
+                st.in_at AS spot_since, st.in_estimated AS spot_estimated {$cf_select}
+         FROM yard_units yu
+         LEFT JOIN yard_accounts ya ON ya.name = yu.account
+         LEFT JOIN yard_locations yl ON yl.id = yu.location_id
+         LEFT JOIN yard_stints st ON st.unit_id = yu.id AND st.out_at IS NULL
+         {$cf_join}
          WHERE {$where} AND yu.picked_up_at IS NULL
          ORDER BY yu.eta IS NULL, yu.eta ASC, yu.id ASC",
         $params
@@ -812,12 +844,29 @@ function getYardUnitTimeline($unit) {
     ];
 }
 
-/** Account → colour map for the legend and the settings page. */
-function getYardCustomerColors() {
+/** The yard's accounts with their colour and how many open containers use each. */
+function getYardAccounts() {
     ensureYardTables();
-    $rows = DB::getInstance()->query("SELECT id, name, yard_color FROM customers ORDER BY name")->results() ?: [];
-    foreach ($rows as $r) $r->effective_color = $r->yard_color ?: yardFallbackColor($r->name);
+    $rows = DB::getInstance()->query(
+        "SELECT ya.*, (SELECT COUNT(*) FROM yard_units yu WHERE yu.account = ya.name AND yu.picked_up_at IS NULL) AS in_use
+         FROM yard_accounts ya ORDER BY ya.name"
+    )->results() ?: [];
+    foreach ($rows as $r) $r->effective_color = $r->color ?: yardFallbackColor($r->name);
     return $rows;
+}
+
+/** Renames an account everywhere it's used, so history stays consistent. Returns error or null. */
+function renameYardAccount($id, $new_name) {
+    $db = DB::getInstance();
+    $new_name = mb_substr(trim($new_name), 0, 100);
+    $acct = $db->query("SELECT * FROM yard_accounts WHERE id = ?", [(int) $id])->first();
+    if (!$acct || $new_name === '' || $new_name === $acct->name) return null;
+    $clash = yardFindAccount($new_name);
+    if ($clash && (int) $clash->id !== (int) $acct->id) return "There's already an account called {$clash->name}.";
+    $db->update('yard_accounts', $acct->id, ['name' => $new_name]);
+    $db->query("UPDATE yard_units SET account = ?, updated_at = updated_at WHERE account = ?", [$new_name, $acct->name]);
+    $db->query("UPDATE yard_stints SET account = ? WHERE account = ?", [$new_name, $acct->name]);
+    return null;
 }
 
 // ── CSV import (Google Sheet "TODAY" tab → File → Download → CSV) ───────────
@@ -954,7 +1003,7 @@ function importYardCsv($path, $warehouse_id, $user_id, $dry_run = true) {
             $report['lines'][] = "Incoming list ← {$number} (already on site)";
             if (!$dry_run && $existing) {
                 updateYardUnit($existing, ['on_list' => 1, 'list_note' => $data['list_note'], 'eta' => $data['eta']]
-                    + ($existing->account ? [] : ['account' => $data['account'], 'customer_id' => $data['customer_id']]), $user_id);
+                    + ($existing->account ? [] : ['account' => $data['account']]), $user_id);
             }
             continue;
         }

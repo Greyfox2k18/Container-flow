@@ -87,7 +87,7 @@ try {
                 $waiting = getYardUnitById($dupe->id);
                 $err = moveYardUnit($waiting, $location_id, $user_id);
                 if ($err) yard_respond(false, $err);
-                unset($data['container_number'], $data['container_id']);
+                unset($data['container_number']);
                 $data = array_filter($data, fn($v) => $v !== null);
                 if ($data) updateYardUnit(getYardUnitById($waiting->id), $data, $user_id);
                 yard_respond(true, 'Placed from Incoming', ['unit_id' => (int) $waiting->id]);

@@ -2,7 +2,8 @@
 /**
  * Yard Board setup — supervisors only.
  *   - Doors & yard spots (bulk add DR01–DR14, F01–F47; rename; retire)
- *   - Account colours (the sheet's "CUSTOMER COLORS" tab)
+ *   - Yard accounts + colours (the sheet's "CUSTOMER COLORS" tab) — the yard's
+ *     own list, separate from Container Flow clients
  *   - Import the T-Card sheet (TODAY tab exported as CSV) to go live
  */
 require_once '../users/init.php';
@@ -94,13 +95,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && Token::check(Input::get('csrf'))) {
                 $message = "Deleted {$loc->code}.";
             }
         }
-    } elseif ($action === 'save_colors') {
-        foreach ((array) ($_POST['color'] ?? []) as $cid => $hex) {
-            $hex = strtolower(trim($hex));
-            $use = isset($_POST['use_color'][$cid]) && preg_match('/^#[0-9a-f]{6}$/', $hex) ? $hex : null;
-            $db->query("UPDATE customers SET yard_color = ? WHERE id = ?", [$use, (int) $cid]);
+    } elseif ($action === 'save_accounts') {
+        foreach ((array) ($_POST['acct_name'] ?? []) as $aid => $name) {
+            $err = renameYardAccount((int) $aid, (string) $name);
+            if ($err) $errors[] = $err;
+            $hex = strtolower(trim((string) ($_POST['color'][$aid] ?? '')));
+            $use = isset($_POST['use_color'][$aid]) && preg_match('/^#[0-9a-f]{6}$/', $hex) ? $hex : null;
+            $db->query("UPDATE yard_accounts SET color = ? WHERE id = ?", [$use, (int) $aid]);
         }
-        $message = 'Account colours saved.';
+        if (!$errors) $message = 'Accounts saved.';
+    } elseif ($action === 'add_account') {
+        $name = trim((string) Input::get('acct_new'));
+        if ($name === '') {
+            $errors[] = 'Type the account name.';
+        } elseif (yardFindAccount($name)) {
+            $errors[] = yardFindAccount($name)->name . ' is already on the list.';
+        } else {
+            $hex = strtolower(trim((string) Input::get('acct_color')));
+            $db->insert('yard_accounts', ['name' => mb_substr($name, 0, 100), 'color' => preg_match('/^#[0-9a-f]{6}$/', $hex) ? $hex : null]);
+            $message = "Added {$name}.";
+        }
+    } elseif ($action === 'delete_account') {
+        $acct = $db->query("SELECT ya.*, (SELECT COUNT(*) FROM yard_units yu WHERE yu.account = ya.name AND yu.picked_up_at IS NULL) AS in_use
+                            FROM yard_accounts ya WHERE ya.id = ?", [(int) Input::get('account_id')])->first();
+        if ($acct && (int) $acct->in_use > 0) {
+            $errors[] = "{$acct->name} is on " . (int) $acct->in_use . " container(s) in the yard, so it can't be removed.";
+        } elseif ($acct) {
+            $db->delete('yard_accounts', (int) $acct->id);
+            $message = "Removed {$acct->name} from the list.";
+        }
     } elseif ($action === 'import_preview') {
         $f = $_FILES['csv'] ?? null;
         if (!$f || $f['error'] !== UPLOAD_ERR_OK) {
@@ -130,7 +153,7 @@ $occupied = [];
 foreach ($db->query("SELECT location_id, container_number FROM yard_units WHERE location_id IS NOT NULL")->results() ?: [] as $r) {
     $occupied[(int) $r->location_id] = $r->container_number;
 }
-$customers = getYardCustomerColors();
+$accounts = getYardAccounts();
 $csrf = Token::generate();
 $wh_qs = $warehouse_id ? '?warehouse_id=' . (int) $warehouse_id : '';
 ?>
@@ -234,32 +257,50 @@ $wh_qs = $warehouse_id ? '?warehouse_id=' . (int) $warehouse_id : '';
             </div>
 
             <div class="ys-card">
-                <h2>Account colours</h2>
-                <p class="help">Cards on the board are tinted with the account's colour, like the sheet's CUSTOMER COLORS tab. Unticked accounts get an automatic colour.
-                    Accounts are matched by Container Flow client name — add new ones under <a href="customer_list.php">Manage Clients</a>.</p>
-                <?php if (!$customers): ?>
-                <p class="help">No clients yet.</p>
+                <h2>Accounts &amp; colours</h2>
+                <p class="help">The yard's own account list, like the sheet's CUSTOMER COLORS tab. It's separate from Container Flow's clients:
+                    anything typed into ACCOUNT on the board is added here automatically, so PEPSI or STRYDER work without any setup.
+                    Tick “Colour” to fill that account's cells on the board; unticked accounts get an automatic colour.
+                    Renaming an account updates every container that uses it.</p>
+                <form method="post" class="ys-row">
+                    <input type="hidden" name="csrf" value="<?php echo $csrf; ?>">
+                    <input type="hidden" name="action" value="add_account">
+                    <div><label for="acct_new">New account</label><input id="acct_new" name="acct_new" class="ys-in" placeholder="e.g. CLOUD PAPER" required></div>
+                    <div><label for="acct_color">Colour</label><input id="acct_color" type="color" name="acct_color" value="#c9daf8" class="ys-in" style="padding:2px;width:52px;"></div>
+                    <button class="ys-btn" type="submit">Add</button>
+                </form>
+                <?php if (!$accounts): ?>
+                <p class="help">No accounts yet. They appear here as soon as someone types one on the board or you import the sheet.</p>
                 <?php else: ?>
                 <form method="post">
                     <input type="hidden" name="csrf" value="<?php echo $csrf; ?>">
-                    <input type="hidden" name="action" value="save_colors">
+                    <input type="hidden" name="action" value="save_accounts">
                     <div class="ys-scroll" style="max-height:340px;">
                     <table class="ys-table">
-                        <thead><tr><th>Client</th><th>Custom</th><th>Colour</th></tr></thead>
+                        <thead><tr><th>Account</th><th>Colour</th><th></th><th>In yard</th><th></th></tr></thead>
                         <tbody>
-                        <?php foreach ($customers as $c): ?>
+                        <?php foreach ($accounts as $a): ?>
                         <tr>
-                            <td><span class="ys-swatch" style="background:<?php echo htmlspecialchars($c->effective_color); ?>"></span> <?php echo htmlspecialchars($c->name); ?></td>
-                            <td><input type="checkbox" name="use_color[<?php echo (int) $c->id; ?>]" value="1" <?php echo $c->yard_color ? 'checked' : ''; ?>></td>
-                            <td><input type="color" name="color[<?php echo (int) $c->id; ?>]" value="<?php echo htmlspecialchars($c->effective_color); ?>"
+                            <td><input class="ys-in" name="acct_name[<?php echo (int) $a->id; ?>]" value="<?php echo htmlspecialchars($a->name); ?>" size="16" aria-label="Account name"></td>
+                            <td><input type="checkbox" name="use_color[<?php echo (int) $a->id; ?>]" value="1" <?php echo $a->color ? 'checked' : ''; ?> aria-label="Use custom colour"></td>
+                            <td><input type="color" name="color[<?php echo (int) $a->id; ?>]" value="<?php echo htmlspecialchars($a->effective_color); ?>" aria-label="Colour"
                                        onchange="this.closest('tr').querySelector('[type=checkbox]').checked = true"></td>
+                            <td><?php echo (int) $a->in_use; ?></td>
+                            <td><?php if (!(int) $a->in_use): ?><button class="ys-btn small" type="submit" form="delacct<?php echo (int) $a->id; ?>" title="Remove from list">&times;</button><?php endif; ?></td>
                         </tr>
                         <?php endforeach; ?>
                         </tbody>
                     </table>
                     </div>
-                    <button class="ys-btn primary" type="submit" style="margin-top:10px;">Save colours</button>
+                    <button class="ys-btn primary" type="submit" style="margin-top:10px;">Save accounts</button>
                 </form>
+                <?php foreach ($accounts as $a): if ((int) $a->in_use) continue; ?>
+                <form method="post" id="delacct<?php echo (int) $a->id; ?>" hidden onsubmit="return confirm(<?php echo htmlspecialchars(json_encode('Remove ' . $a->name . ' from the account list?')); ?>);">
+                    <input type="hidden" name="csrf" value="<?php echo $csrf; ?>">
+                    <input type="hidden" name="action" value="delete_account">
+                    <input type="hidden" name="account_id" value="<?php echo (int) $a->id; ?>">
+                </form>
+                <?php endforeach; ?>
                 <?php endif; ?>
             </div>
         </div>
